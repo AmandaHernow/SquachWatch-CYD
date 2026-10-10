@@ -32,15 +32,33 @@ class TFT_eSPI;
 // so the condition is simply "a board", and a new one inherits it: the push
 // is the library's own transaction with the waiting put to use, and it
 // declines any frame whose shape it does not recognise rather than guessing.
-// Not on an ESP32-S3 yet (SQW_S3: the T-Watch and the Freenove S3): the
-// overlapped push talks to the ESP32 SPI registers, and the S3 lays them out
-// differently -- the first frame through it came out white. pushSprite()
-// until it is ported. And not on the CrowPanel 7, which has no SPI display at
-// all: CrowBlit writes rows into its RGB framebuffer (crowpanel7_blit.h).
-#if defined(ARDUINO_ARCH_ESP32) && !defined(SQW_S3) && !defined(CROWPANEL7)
-  #define SQW_FRAME_PUSH 1
+// The ESP32-S3 boards do not get the register push: it talks to the ESP32's
+// SPI registers, and the S3 lays them out differently -- the first frame
+// through it came out white. The Freenove S3 takes the C5's other route
+// instead (SQW_PUSH_DMA_ONLY): the same row hashing and spans, but every
+// span goes out by the IDF driver's DMA from bounce buffers, in a task of
+// its own while the loop draws the next frame, and no register is touched
+// by hand -- the library's own end-of-transfer callback puts the engine
+// back the way its register writes expect. The T-Watch, StickS3 and
+// Cardputer stay on pushSprite() until each has been measured on that
+// route. And not the CrowPanel 7, which has no SPI display at all: CrowBlit
+// writes rows into its RGB framebuffer (crowpanel7_blit.h).
+#if defined(ARDUINO_ARCH_ESP32) && defined(FREENOVE_S3)
+  #define SQW_FRAME_PUSH    1
+  #define SQW_PUSH_DMA_ONLY 1
+#elif defined(ARDUINO_ARCH_ESP32) && !defined(SQW_S3) && !defined(CROWPANEL7)
+  #define SQW_FRAME_PUSH    1
+  #define SQW_PUSH_DMA_ONLY 0
 #else
-  #define SQW_FRAME_PUSH 0
+  #define SQW_FRAME_PUSH    0
+  #define SQW_PUSH_DMA_ONLY 0
+#endif
+// The push in a task of its own, reading one frame while the loop draws
+// into another: main.cpp's second buffer and asyncSubmit() below.
+#if defined(NM_CYD_C5) || SQW_PUSH_DMA_ONLY
+  #define SQW_PUSH_ASYNC 1
+#else
+  #define SQW_PUSH_ASYNC 0
 #endif
 
 namespace FramePush {

@@ -573,14 +573,18 @@ bool                usingCapTouch = false;
 // banded render to direct-to-tft; the other board's `canvas` pointer
 // gets reseated to &tft directly at the point of failure instead.
 bool                frameBufferOk = true;
-#if defined(NM_CYD_C5)
+#if SQW_PUSH_ASYNC
 // The frame the push task is reading while the loop draws into `frame`'s
 // own; the two trade places every pushFrame(). See FramePush::asyncSubmit().
 static uint8_t*     s_frameB = nullptr;
 // The screen the last pushed frame belonged to. A new one is carried across
 // into the other buffer once (see pushFrame()).
 static int          s_pushedState = -1;
+#endif
+#if defined(NM_CYD_C5)
 // The touch sample pushFrame() takes while the bus is free, for pollTouch().
+// The C5's touch shares the display's SPI bus; the Freenove S3's is on I2C
+// and reads whenever it likes.
 static bool         s_tsValid = false, s_tsDown = false;
 static int16_t      s_tsA = 0, s_tsB = 0;
 static bool readTouchRaw(int16_t& a, int16_t& b);
@@ -3820,7 +3824,7 @@ void setup() {
 #if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
 #endif
-#if (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL) || defined(NM_CYD_C5)
+#if (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL) || SQW_PUSH_ASYNC
     // Say where it landed: a frame in the wrong memory is the CrowPanel's
     // twitch and the C5's eight frames a second.
     if (frameOk) {
@@ -3835,7 +3839,7 @@ void setup() {
                       ext ? "PSRAM" : "internal");
     }
 #endif
-#if defined(NM_CYD_C5)
+#if SQW_PUSH_ASYNC
     // A second frame for the push task to read while the loop draws the
     // next (see pushFrame()). PSRAM, like the first; 75 KB of 8 MB.
     if (frameOk) {
@@ -4283,7 +4287,7 @@ static inline void pushFrame(int x, int y) {
     // never came up, in which case there is nowhere to put the frame at all.
     CrowBlit::push(frame.buf(), frame.bufW(), frame.bufH(), x, y);
 #else
-#if defined(NM_CYD_C5)
+#if SQW_PUSH_ASYNC
     // The push task takes this frame and the loop draws the next into the
     // other buffer, which holds the frame before last. Nothing is copied
     // across: copying the 75 KB through PSRAM cost 13 ms a frame (measured),
@@ -4295,10 +4299,12 @@ static inline void pushFrame(int x, int y) {
         // Between the last push finishing and this one starting the bus is
         // free: the one place touch can be read without waiting on a frame.
         FramePush::asyncWait();
+#if defined(NM_CYD_C5)
         FramePush::busLock();
         s_tsDown  = readTouchRaw(s_tsA, s_tsB);
         s_tsValid = true;
         FramePush::busUnlock();
+#endif
         if (FramePush::asyncSubmit(frame.buf(), frame.bufW(), frame.bufH(), x, y)) {
             s_frameB = frame.swapBuf(s_frameB);
             // The first frame of a new screen is copied into the buffer the

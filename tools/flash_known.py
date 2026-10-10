@@ -50,6 +50,10 @@ BOARDS = {
     # header from another project of the owner's. Its old firmware was read
     # off first. Bring-up began 2026-10-04.
     "30:ed:a0:c8:9a:b8": ("cardputer-adv", "M5Stack Cardputer ADV, 1.14in 135x240, keyboard, native USB"),
+    # Freenove ESP32-S3 Display 2.8in (Amazon B0FSQF6FKN): ESP32-S3R8, 16 MB
+    # flash, ILI9341, FT6336 capacitive touch, native USB with its MAC as the
+    # serial number. greasy-electronics' BETA build, first run here 2026-10-09.
+    "28:84:85:42:ef:28": ("freenove-s3", "Freenove ESP32-S3 Display 2.8in (FNK0104B), native USB"),
     # 88:57:21:2e:e6:e0 runs SquachEmit, not this firmware. It is the only
     # CAPACITIVE 2.8in; to test capacitive touch, list it here as cyd-fast
     # for the test and comment it out again after (done 2026-09-21).

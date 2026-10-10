@@ -2,6 +2,8 @@
 #include <TFT_eSPI.h>
 #if defined(NM_CYD_C5)
 #include <soc/pcr_reg.h>
+#endif
+#if defined(NM_CYD_C5) || SQW_PUSH_DMA_ONLY
 #include <esp_heap_caps.h>
 #include <driver/spi_master.h>
 #include <string.h>
@@ -84,7 +86,7 @@ bool begin() {
     for (int i = 0; i < 256; i++) s_lut[i] = rgb332Wire((uint8_t)i);
     s_ready = true;
     Serial.println("[push] overlapped frame push on, unchanged rows skipped");
-#if defined(SQW_PUSH_PROBE)
+#if defined(SQW_PUSH_PROBE) && !SQW_PUSH_DMA_ONLY
     // Bring-up probe: is the frame push slow because of the wire or the CPU?
     Serial.printf("[probe] cpu %u MHz, apb %u Hz, SPI_CLOCK_REG=0x%08X SPI_USER_REG=0x%08X\n",
                   (unsigned)ESP.getCpuFreqMHz(), (unsigned)getApbFrequency(),
@@ -118,6 +120,7 @@ static inline uint32_t rowHash(const uint8_t* row, int32_t w) {
     return h;
 }
 
+#if !SQW_PUSH_DMA_ONLY
 // Latching the transfer registers, which is not free on every ESP32.
 //
 // On the original ESP32 and the S3, writing SPI_USR is enough: the length in
@@ -175,6 +178,7 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
     }
     while (READ_PERI_REG(SPI_CMD_REG(SPI_PORT)) & SPI_USR) {}
 }
+#endif  // !SQW_PUSH_DMA_ONLY
 
 // The ESP32-C5's SPI clock, raised from inside the transaction.
 //
@@ -229,7 +233,6 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
 // rated 2.5 MHz, and an SD card at 13 MHz instead of 4. Nothing would report
 // an error; touch would just start missing presses. Raised here, restored
 // here, and only ever while this file owns the bus.
-#if defined(NM_CYD_C5)
 
 // ---- the wire by DMA: step one of overlapping the push with the drawing --
 // On this chip the push is 20 ms of a 50 ms frame, and the register push
@@ -245,33 +248,42 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
 // task of its own and the waiting goes to the drawing (step two).
 //
 // -DSQW_C5_DMA=0 is the register push, unchanged.
+//
+// The Freenove S3 takes this same route, and only this route: the S3 has no
+// register push to fall back on (frame_push.h), so a driver that will not
+// start hands the frame back to pushSprite().
 #ifndef SQW_C5_DMA
 #define SQW_C5_DMA 1
 #endif
-#if SQW_C5_DMA
+#if (defined(NM_CYD_C5) && SQW_C5_DMA) || SQW_PUSH_DMA_ONLY
+#define SQW_PUSH_DMA 1
+#else
+#define SQW_PUSH_DMA 0
+#endif
+#if SQW_PUSH_DMA
 static uint16_t* s_bounce[2] = { nullptr, nullptr };
 static int32_t   s_bounceW  = 0;
 static int8_t    s_dmaState = 0;             // 0 untried, 1 on, -1 not available
 static const int32_t CHUNK_ROWS = 8;
 
-static bool c5Dma(TFT_eSPI& tft, int32_t w) {
+static bool pushDma(TFT_eSPI& tft, int32_t w) {
     if (s_dmaState) return s_dmaState > 0 && s_bounceW == w;
     s_dmaState = -1;
     for (int k = 0; k < 2; k++)
         s_bounce[k] = (uint16_t*)heap_caps_malloc((size_t)w * CHUNK_ROWS * sizeof(uint16_t),
                                                   MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!s_bounce[0] || !s_bounce[1]) {
-        Serial.println("[push] C5 DMA: no room for the bounce buffers; the register push stays");
+        Serial.println("[push] DMA: no room for the bounce buffers; the plain push stays");
         return false;
     }
     if (!tft.initDMA(false)) {
-        Serial.println("[push] C5 DMA: the driver would not start; the register push stays");
+        Serial.println("[push] DMA: the driver would not start; the plain push stays");
         return false;
     }
     tft.setSwapBytes(false);                 // the table is already in wire order
     s_bounceW  = w;
     s_dmaState = 1;
-    Serial.printf("[push] C5 DMA on: %d-row chunks of %u bytes, heap %lu\n",
+    Serial.printf("[push] DMA on: %d-row chunks of %u bytes, heap %lu\n",
                   (int)CHUNK_ROWS, (unsigned)(w * CHUNK_ROWS * 2), (unsigned long)ESP.getFreeHeap());
     return true;
 }
@@ -332,6 +344,7 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
         k++;
     }
     if (inFlight) { spi_transaction_t* done = nullptr; spi_device_get_trans_result(dmaHAL, &done, portMAX_DELAY); }
+#if defined(NM_CYD_C5)
     // Back to CPU mode before the library writes a register again. The
     // driver leaves the engine's DMA enables set, and a register-fed
     // transfer with DMA_TX_ENA on waits for descriptors that never come:
@@ -340,8 +353,14 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
     SET_PERI_REG_MASK(SPI_DMA_CONF_REG(SPI_PORT), SPI_BUF_AFIFO_RST | SPI_DMA_AFIFO_RST);
     CLEAR_PERI_REG_MASK(SPI_DMA_CONF_REG(SPI_PORT), SPI_BUF_AFIFO_RST | SPI_DMA_AFIFO_RST);
     SQW_SPI_LATCH();
-}
 #endif
+    // On the S3 the library's own post-transfer callback (dma_end_callback in
+    // its S3 processor port) clears SPI_DMA_CONF_REG after every transaction,
+    // so its register-fed writes work again without any help from here.
+}
+#endif  // SQW_PUSH_DMA
+
+#if defined(NM_CYD_C5)
 
 // 0 selects the undivided module clock; 1..63 divide it by N+1.
 #ifndef SQW_C5_SPI_DIV
@@ -437,35 +456,42 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
         for (int i = 0; i < n; i++)
             if (((uint32_t)(spans[i].r1 - spans[i].r0) * (uint32_t)w) % PX_PER_BURST) { spans[0].r0 = 0; spans[0].r1 = h; n = 1; break; }
         tft.startWrite();
-#if defined(NM_CYD_C5) && SQW_C5_DMA
+#if SQW_PUSH_DMA
         // By DMA when the driver will have it; the register push, with its
         // raised clock, when not. The driver runs its own clock (see
         // SQW_C5_DMA_HZ), so the raise is only for the register path.
-        const bool dma = c5Dma(tft, w);
+        const bool dma = pushDma(tft, w);
+#if SQW_PUSH_DMA_ONLY
+        // No register push on this chip: the caller's pushSprite() instead.
+        if (!dma) { tft.endWrite(); return false; }
+#endif
+#endif
+#if defined(NM_CYD_C5)
         // The clock raise even by DMA: startWrite() has just set the SPI
         // clock register to the library's 20 MHz, and the driver programs
         // its own 80 MHz only when a different device last had the bus --
         // with one device it never does again, and its transfers ran at the
         // library's clock (28 Mbit/s measured, 1.45 ms per 2,560 pixels).
+        // Inside the transaction, after beginTransaction has had its say.
         const uint32_t c5pcr = sqwC5SpiClockRaise();
+#endif
+#if SQW_PUSH_DMA
         // The bus for the whole frame: the driver's per-transfer lock is a
         // scheduling point, and on one core that is where the radio tasks
         // get in between chunks.
         if (dma) spi_device_acquire_bus(dmaHAL, portMAX_DELAY);
-#elif defined(NM_CYD_C5)
-        // Inside the transaction, after beginTransaction has had its say.
-        const uint32_t c5pcr = sqwC5SpiClockRaise();
 #endif
         for (int i = 0; i < n; i++) {
             const int32_t r0 = spans[i].r0, r1 = spans[i].r1;
             tft.setAddrWindow(x, y + r0, w, r1 - r0);
-#if defined(NM_CYD_C5) && SQW_C5_DMA
+#if SQW_PUSH_DMA
             if (dma) {
                 pushRowsDma(tft, src + (size_t)r0 * (size_t)w, w, r1 - r0);
                 s_lastRows += r1 - r0;
                 continue;
             }
 #endif
+#if !SQW_PUSH_DMA_ONLY
             WRITE_PERI_REG(SPI_MOSI_DLEN_REG(SPI_PORT), 511);
             // Once per span, not once per burst. Per the C5 TRM (ch.33, SPI
             // Controller): SPI_UPDATE "synchronize[s] SPI registers from APB
@@ -487,11 +513,12 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
             SQW_SPI_LATCH();
             pushPixels(src + (size_t)r0 * (size_t)w, (uint32_t)(r1 - r0) * (uint32_t)w);
             s_lastRows += r1 - r0;
+#endif  // !SQW_PUSH_DMA_ONLY
         }
-#if defined(NM_CYD_C5) && SQW_C5_DMA
+#if SQW_PUSH_DMA
         if (dma) spi_device_release_bus(dmaHAL);
-        sqwC5SpiClockRestore(c5pcr);
-#elif defined(NM_CYD_C5)
+#endif
+#if defined(NM_CYD_C5)
         sqwC5SpiClockRestore(c5pcr);
 #endif
         tft.endWrite();
@@ -507,7 +534,7 @@ bool push(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int32_t x, in
     return pushNow(tft, src, w, h, x, y);
 }
 
-#if defined(NM_CYD_C5) && SQW_C5_DMA
+#if SQW_PUSH_DMA
 // ---- step two: the push in a task of its own ----------------------------
 // The loop hands over a finished frame (asyncSubmit) and goes on drawing
 // the next into another buffer; this task hashes, converts and pushes it,
@@ -548,7 +575,7 @@ bool asyncBegin(TFT_eSPI& tft) {
     // Above the loop task (1), below the radios: it wakes for a fifth of a
     // millisecond per chunk and sleeps the rest.
     if (xTaskCreate(pusherTask, "framePush", 4096, nullptr, 3, &s_task) != pdPASS) { s_task = nullptr; return false; }
-    Serial.println("[push] C5: the push runs in its own task; the loop draws while the wire works");
+    Serial.println("[push] the push runs in its own task; the loop draws while the wire works");
     return true;
 }
 
