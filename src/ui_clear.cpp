@@ -2483,6 +2483,92 @@ static uint32_t rawGuestId(uint32_t now) {
 #include "idle_events.h"
 #include <Arduino.h>
 
+// The pets at double size on the large panels. They are drawn, unchanged,
+// into a layer half the screen's width and height (Pet::setZoom says which
+// world they are in), and every pixel they drew is laid onto the screen as
+// a 2x2 block. 38 KB at 480x320, in PSRAM: only boards that have it, so the
+// 3.5" CYDs without PSRAM keep their pets at the old size.
+static TFT_eSprite* s_petLayer = nullptr;
+// The see-through colour: a dark pure green that no pet, balloon or chain is
+// drawn in (every colour in their code checked, 2026-10-09). It was 0x2125
+// first -- which is C1iPPY's outline, so he came out with none.
+static const uint16_t PET_KEY16 = 0x06C0;
+
+static bool petLayerFor(TFT_eSPI& t, int w, int h) {
+    if (!Theme::large()) return false;
+#if defined(ESP_PLATFORM)
+    if (!psramFound()) return false;
+#endif
+    const int lw = w / 2, lh = h / 2;
+    if (s_petLayer && (s_petLayer->width() != lw || s_petLayer->height() != lh)) {
+        s_petLayer->deleteSprite();
+        delete s_petLayer;
+        s_petLayer = nullptr;
+    }
+    if (!s_petLayer) {
+        s_petLayer = new TFT_eSprite(&t);
+        s_petLayer->setColorDepth(8);
+#if defined(ESP_PLATFORM)
+        s_petLayer->setAttribute(PSRAM_ENABLE, true);
+#endif
+        if (!s_petLayer->createSprite(lw, lh)) {
+            delete s_petLayer;
+            s_petLayer = nullptr;
+            return false;
+        }
+    }
+    return true;
+}
+
+static void drawPets(TFT_eSPI& t, uint32_t now, int w, int h, int bandTop, int petFloor) {
+    if (!Pet::anyOut(now) || !petLayerFor(t, w, h)) {
+        Pet::setZoom(1);
+        Pet::tick(t, now, w, bandTop, petFloor);
+        return;
+    }
+    Pet::setZoom(2);
+    TFT_eSprite& L = *s_petLayer;
+    L.fillRect(0, 0, L.width(), L.height(), PET_KEY16);   // fillSprite, which the emulator lacks
+#if defined(ESP_PLATFORM)
+    // The key as the layer stores it, whatever 8 bits the 16 came down to.
+    const uint8_t PET_KEY8 = L.getPointer() ? ((const uint8_t*)L.getPointer())[0] : 0;
+#endif
+    // ...and as the layer reads it back, which is not always the 16 bits
+    // that went in: the sprite stores fewer, and gives back what it kept.
+    const uint16_t petKey = L.readPixel(0, 0);
+    Pet::tick(L, now, w / 2, bandTop / 2, petFloor / 2);
+    const int lw = L.width(), lh = L.height();
+#if defined(ESP_PLATFORM)
+    // The layer's own bytes on a board: 38,400 of them, a run at a time.
+    const uint8_t* buf = (const uint8_t*)L.getPointer();
+    if (buf && L.getColorDepth() == 8) {
+        for (int y = 0; y < lh; y++) {
+            const uint8_t* row = buf + (size_t)y * lw;
+            int x = 0;
+            while (x < lw) {
+                const uint8_t c = row[x];
+                int e = x + 1;
+                while (e < lw && row[e] == c) e++;
+                if (c != PET_KEY8) t.fillRect(x * 2, y * 2, (e - x) * 2, 2, L.color8to16(c));
+                x = e;
+            }
+        }
+        return;
+    }
+#endif
+    // The emulator's sprites keep 16 bits a pixel: read them back instead.
+    for (int y = 0; y < lh; y++) {
+        int x = 0;
+        while (x < lw) {
+            const uint16_t c = L.readPixel(x, y);
+            int e = x + 1;
+            while (e < lw && L.readPixel(e, y) == c) e++;
+            if (c != petKey) t.fillRect(x * 2, y * 2, (e - x) * 2, 2, c);
+            x = e;
+        }
+    }
+}
+
 void uiClearInit(TFT_eSPI& t) {
     // fillScreen() relies on TFT_eSPI's base-class width/height, which
     // TFT_eSprite::createSprite() never updates — it leaves stale
@@ -2570,7 +2656,7 @@ static uint16_t counterCount(const DetectionEngine& eng, DetectionType t) {
 static const int XP_ICON_W = 9;     // the icon and the gap after it
 static const int XP_ADV    = 7;     // per letter: 5 wide, 1 bolder, 1 gap
 static void drawXpTile(TFT_eSPI& t, int x, int y, int w, int h, const char* txt,
-                       uint16_t iconCol, uint8_t state, int pad) {
+                       uint16_t iconCol, uint8_t state, int pad, int k = 1) {
     // Top and bottom of the gradient, then the edge, per state.
     // The blue is the channel's #0099FF at the bottom, lighter up top.
     static const uint16_t TOP[3]  = { 0x661F /* #66C2FF */, 0xFD8A /* #FFB050 */, 0x8C77 /* #8C8EB8 */ };
@@ -2587,24 +2673,28 @@ static void drawXpTile(TFT_eSPI& t, int x, int y, int w, int h, const char* txt,
         const int inset = (r == 1 || r == h - 2) ? 1 : 0;
         t.drawFastHLine(x + 1 + inset, y + r, w - 2 - 2 * inset, c);
     }
-    t.drawRoundRect(x, y, w, h, 3, EDGE[state]);
+    t.drawRoundRect(x, y, w, h, 3 * k, EDGE[state]);
     // The tray icon: the device's colour in a little bevelled square.
-    const int ix = x + pad, iy = y + (h - 6) / 2;
-    t.fillRect(ix, iy, 6, 6, state == 2 ? Theme::blend(iconCol, 0x8410, 160) : iconCol);
-    t.drawFastHLine(ix, iy, 6, 0xFFFF);
-    t.drawFastVLine(ix, iy, 6, 0xFFFF);
-    t.drawFastHLine(ix, iy + 5, 6, EDGE[state]);
-    t.drawFastVLine(ix + 5, iy, 6, EDGE[state]);
+    const int is = 6 * k;
+    const int ix = x + pad, iy = y + (h - is) / 2;
+    t.fillRect(ix, iy, is, is, state == 2 ? Theme::blend(iconCol, 0x8410, 160) : iconCol);
+    t.drawFastHLine(ix, iy, is, 0xFFFF);
+    t.drawFastVLine(ix, iy, is, 0xFFFF);
+    t.drawFastHLine(ix, iy + is - 1, is, EDGE[state]);
+    t.drawFastVLine(ix + is - 1, iy, is, EDGE[state]);
     // Tahoma Bold, near enough: each letter twice, a pixel apart. One
     // letter at a time on a 7-pixel advance: the font's own 6 leaves no gap
     // once the letters are a pixel wider, and they ran together (2026-10-05).
-    const int ty = y + (h - 8) / 2;
-    int tx = ix + XP_ICON_W;
+    // k: 2 on the large panels, the whole tile drawn at double size.
+    const int ty = y + (h - 8 * k) / 2;
+    int tx = ix + XP_ICON_W * k;
     t.setTextColor(INK[state]);
-    for (const char* c = txt; *c; c++, tx += XP_ADV) {
+    t.setTextSize(k);
+    for (const char* c = txt; *c; c++, tx += XP_ADV * k) {
         t.setCursor(tx, ty);         t.write(*c);
         t.setCursor(tx + 1, ty);     t.write(*c);
     }
+    t.setTextSize(1);
 }
 
 // CLASSIC's counters: one plain line of LABEL:COUNT pairs.
@@ -2934,7 +3024,11 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     static uint8_t s_tileRowsLast = 0;      // rows the tiles took last frame
     const uint8_t extraRows = Theme::compact() ? 1 : 0;
     const uint8_t rowsKept  = (extraRows && s_tileRowsLast > counterRows) ? s_tileRowsLast : counterRows;
-    const int bandTop       = xp ? tilesTop + rowsKept * lineH : titleBottom;
+    // The tiles' own row height: twice the counters' on the large panels,
+    // where every tile is drawn at double size (drawXpTile's k).
+    const int tileK         = Theme::large() ? 2 : 1;
+    const int tileLineH     = lineH * tileK;
+    const int bandTop       = xp ? tilesTop + rowsKept * tileLineH : titleBottom;
     const int squachyBottom = xp ? bar.y - 1 : counterTextTop - 2;
     // A panel far taller than it is wide -- the phone app's emulator, shaped
     // like the phone; no board is -- would hand him a band twice his usual
@@ -2993,7 +3087,10 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     // straight after he is drawn: the desk and the alert cameo want theirs.
     // XP: his bubble rises to just under last frame's tiles, or to the top
     // row when there are none -- not onto them.
-    if (xp) Squachy::setBubbleRiseTo(s_tileRowsLast ? tilesTop + s_tileRowsLast * lineH + 1 : 1);
+    // On the large panels it rises to the top row regardless: his bubble is
+    // twice the size there, and under the tiles it sat across his own head.
+    // The tiles it covers wait for it to go (underBubble, below).
+    if (xp) Squachy::setBubbleRiseTo((s_tileRowsLast && !Theme::large()) ? tilesTop + s_tileRowsLast * tileLineH + 1 : 1);
 
     // Squachy: main character, reacts to events, cracks jokes when idle.
     // His available region runs all the way to countersTop (not
@@ -3367,9 +3464,9 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         for (uint8_t i = 0; i < counterN; i++) {
             snprintf(tileTxt[i], sizeof(tileTxt[i]), "%s %u", counterLabel(counterTypes[i]),
                      counterCount(eng, counterTypes[i]));
-            tileW[i] = (uint16_t)((int)strlen(tileTxt[i]) * XP_ADV + 10 + XP_ICON_W);
+            tileW[i] = (uint16_t)(((int)strlen(tileTxt[i]) * XP_ADV + 10 + XP_ICON_W) * tileK);
         }
-        int tileGap = 4, tilePad = 5;
+        int tileGap = 4 * tileK, tilePad = 5 * tileK;
         uint8_t rowsUsed = 0;
         // A row that reaches into the title bar's icon band keeps between the
         // corner icons: the menu on the left, rotate (and the lock, when the
@@ -3378,14 +3475,14 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
                                     ? Theme::TITLE_ICON_W + (Security::enabled() ? 26 : 0)
                                     : Theme::TITLE_ICON_W) + 3;
         auto rowRoom = [&](uint8_t row) {
-            const int top = tilesTop + row * lineH;
+            const int top = tilesTop + row * tileLineH;
             return top < Theme::TITLE_ICON_BAND_H ? w - 2 * iconMargin : w - 8;
         };
         // Tighter tiles, once, if a crowded day will not fit the rows there are.
         for (uint8_t pass = 0; pass < 2 && counterN && !rowsUsed; pass++) {
         if (pass == 1) {
-            tileGap = 2; tilePad = 2;
-            for (uint8_t i = 0; i < counterN; i++) tileW[i] -= 6;
+            tileGap = 2 * tileK; tilePad = 2 * tileK;
+            for (uint8_t i = 0; i < counterN; i++) tileW[i] -= 6 * tileK;
         }
         for (uint8_t r = 1; r <= counterRows + extraRows; r++) {
             const uint8_t bse = counterN / r, rem = counterN % r;
@@ -3422,18 +3519,18 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
             uint8_t st = 0;
             for (uint8_t row = 0; row < rowsUsed; row++) {
                 const uint8_t n = bse + (row < rem ? 1 : 0);
-                const int rowY = tilesTop + 2 + row * lineH;
+                const int rowY = tilesTop + 2 + row * tileLineH;
                 int rw = 0;
                 for (uint8_t k = 0; k < n; k++) rw += tileW[st + k] + (k ? tileGap : 0);
                 int x = (w - rw) / 2;
-                const bool paint = DrawBand::has(rowY - 2, rowY + lineH);
+                const bool paint = DrawBand::has(rowY - 2, rowY + tileLineH);
                 for (uint8_t k = 0; k < n; k++) {
                     const uint8_t i = st + k;
                     const DetectionType ty = counterTypes[i];
                     bool lit = false;
                     for (uint8_t d = 0; d < (uint8_t)DetectionType::COUNT && d < 32; d++)
                         if ((s_litMask & (1u << d)) && uiClearColumnHolds(ty, (DetectionType)d)) { lit = true; break; }
-                    const int ty0 = rowY - 2, th = 12;
+                    const int ty0 = rowY - 2, th = 12 * tileK;
                     // A tile under his speech bubble waits for it to go: the
                     // bubble is the one that has something to say right now.
                     const bool underBubble = bub && x < bX + bW && x + tileW[i] > bX && ty0 < bY + bH && ty0 + th > bY;
@@ -3443,7 +3540,7 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
                         const uint32_t since = s_tileSince[(uint8_t)ty];
                         const bool flash = lit && since && now - since < 3000 && ((now - since) / 500) % 2 == 0;
                         drawXpTile(t, x, ty0, tileW[i], th, tileTxt[i], Theme::colorFor(ty),
-                                   flash ? 1 : (lit ? 0 : 2), tilePad);
+                                   flash ? 1 : (lit ? 0 : 2), tilePad, tileK);
                     }
                     if (s_tileN < TILE_MAX) s_tiles[s_tileN++] = { (int16_t)x, (int16_t)ty0, (int16_t)tileW[i], (int16_t)th, ty };
                     x += tileW[i] + tileGap;
@@ -3454,7 +3551,7 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     }
 
     // The pet, last of the scene: over the counters, under the buttons.
-    if (!Settings::boringMode()) Pet::tick(t, now, w, bandTop, petFloor);
+    if (!Settings::boringMode()) drawPets(t, now, w, h, bandTop, petFloor);
 
     // Soft buttons, straight over the background: it repaints the whole
     // strip under them every frame, margins and gaps included. Each

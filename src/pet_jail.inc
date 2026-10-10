@@ -188,7 +188,7 @@ __attribute__((noinline)) static void chainDraw(TFT_eSPI& t, int ax, int ay, int
 
 __attribute__((noinline)) static void jailTick(TFT_eSPI& t, uint32_t now, int screenW) {
     int cx, halfW, top, bot;
-    if (!Squachy::lastFootprint(cx, halfW, top, bot)) { s_jX = -100; return; }
+    if (!zFootprint(cx, halfW, top, bot)) { s_jX = -100; return; }
     (void)top;
     // The ball stays where he stands; a carried or thrown Squachy pulls the
     // chain, not the ball.
@@ -247,7 +247,7 @@ __attribute__((noinline)) static void jailTick(TFT_eSPI& t, uint32_t now, int sc
     if (ballOn) {
         const int bb = floorY + drop;
         int ax, ay;
-        if (drop == 0 && Squachy::chainPoint(ax, ay)) {
+        if (drop == 0 && zChainPoint(ax, ay)) {
             const int link = r / 4 > 2 ? r / 4 : 2;
             chainDraw(t, ax, ay, ballX - r * 3 / 4, bb - r - r * 3 / 4, floorY, link, away);
         }

@@ -416,7 +416,7 @@ int main(int argc, char** argv) {
     int H = portrait ? 320 : 240;
     if (!sizeArg.empty()) {
         int sw = 0, sh = 0;
-        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; Theme::setCompact(H < 200); Theme::setStillBackdrop(getenv("SQUACHSIM_STILL") != nullptr); }
+        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; Theme::setCompact(H < 200); Theme::setLarge((W < H ? W : H) >= 320); Theme::setStillBackdrop(getenv("SQUACHSIM_STILL") != nullptr); }
         else { fprintf(stderr, "--size wants WxH, e.g. 480x320" "\n"); return 2; }
     }
 
@@ -583,6 +583,9 @@ int main(int argc, char** argv) {
         Theme::showToast("HEADS-UP", huSub, Theme::AMBER, 8000);
         Squachy::announce(huLine);
     }
+    // SQUACHSIM_SAY="LINE": a line in his bubble as the screen opens, for
+    // comparing bubble sizes across panels.
+    if (const char* say = getenv("SQUACHSIM_SAY")) Squachy::announce(say);
     // SQUACHSIM_CLIPCATCH=TYPE: C1iPPY has just seen a catch of that type and
     // has his expert opinion ready.
     if (const char* cc = getenv("SQUACHSIM_CLIPCATCH")) Pet::noteCatch((uint8_t)atoi(cc));

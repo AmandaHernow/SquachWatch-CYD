@@ -21,6 +21,11 @@
 #else
 #define SQW_PUSH_ROWS() FramePush::lastRows()
 #endif
+#if defined(FREENOVE_S3_35)
+#include "st77922_display.h"
+#include "st77922_qspi.h"
+#include "st77922_touch.h"
+#endif
 #if defined(CYD32C) || defined(CYD35C)
 #include "gt911_touch.h"
 #endif
@@ -426,6 +431,8 @@ static void drawCrashCard(TFT_eSPI& t) {
 #define BL_PIN_AWOK 32
 #if defined(SQW_SMALL)
 #define BL_PIN_S3   38   // the StickS3's and the Cardputer ADV's
+#elif defined(FREENOVE_S3_35)
+#define BL_PIN_S3   41   // the Freenove 3.5"'s, through a BSS138 (HIGH is on)
 #else
 #define BL_PIN_S3   45   // the T-Watch S3's and the Freenove S3's, both
 #endif
@@ -453,6 +460,11 @@ constexpr bool PANEL_NEEDS_INVERSION = true;
 #elif defined(SQW_SMALL)
 // M5GFX sets invert for the StickS3's ST7789P3 and the Cardputer's ST7789V2.
 // Confirmed on the stick 2026-10-04.
+constexpr bool PANEL_NEEDS_INVERSION = true;
+#elif defined(FREENOVE_S3_35)
+// Freenove's init for the 3.5" ST77922 turns inversion on (0x21), which is
+// what St77922TFT::invertDisplay(true) sends. UNCONFIRMED by eye until the
+// board is looked at; INVERT in Settings flips it if wrong.
 constexpr bool PANEL_NEEDS_INVERSION = true;
 #elif defined(FREENOVE_S3)
 // Freenove's own setup for the S3 2.8" (FNK0104AB) turns inversion on, and
@@ -529,6 +541,10 @@ public:
 // device type and only this hierarchy gives the two a common base. Nothing
 // is ever sent to an SPI display bus on this board -- see the header.
 CrowPanelTFT        tft;
+#elif defined(FREENOVE_S3_35)
+// Likewise not a TFT_eSPI: an ST77922 on a four-lane QSPI bus, wearing the
+// library's interface for the same reason -- see st77922_display.h.
+St77922TFT          tft;
 #else
 TFT_eSPI            tft = TFT_eSPI();
 #endif
@@ -711,6 +727,10 @@ static bool rawReadResistive(int16_t& a, int16_t& b);
 // calibration is needed or wanted.
 static uint16_t CAP_NX_MIN = CROW_CAP_NX_MIN, CAP_NX_MAX = CROW_CAP_NX_MAX;
 static uint16_t CAP_NY_MIN = CROW_CAP_NY_MIN, CAP_NY_MAX = CROW_CAP_NY_MAX;
+#elif defined(FREENOVE_S3_35)
+// The ST77922's own touch reports panel pixels too: a pass-through.
+static uint16_t CAP_NX_MIN = St77922Touch::NX_MIN, CAP_NX_MAX = St77922Touch::NX_MAX;
+static uint16_t CAP_NY_MIN = St77922Touch::NY_MIN, CAP_NY_MAX = St77922Touch::NY_MAX;
 #else
 static uint16_t CAP_NX_MIN = 32,  CAP_NX_MAX = 166;
 static uint16_t CAP_NY_MIN = 10,  CAP_NY_MAX = 308;
@@ -1444,6 +1464,11 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
     if (!Gt911::read(x, y)) return false;
     a = (int16_t)x; b = (int16_t)y;
     return true;
+#elif defined(FREENOVE_S3_35)
+    uint16_t x, y;
+    if (!St77922Touch::read(x, y)) return false;
+    a = (int16_t)x; b = (int16_t)y;
+    return true;
 #else
     if (usingCapTouch) return rawReadCap(a, b);
 #if defined(TOUCH_ON_DISPLAY_BUS) || defined(CYD35R)
@@ -1461,8 +1486,9 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
 static bool s_screenDimmed = false;
 // The BOOT button (GPIO0) on the plain-ESP32 CYDs: a short press turns the
 // screen off or on, a long one starts CHARGE MODE. The S3 boards and the
-// CrowPanel are left out until somebody has pressed theirs.
-#if defined(ESP32) && !defined(SQW_S3) && !defined(CROWPANEL7)
+// CrowPanel are left out until somebody has pressed theirs -- except the
+// Freenove 3.5", whose one button is GPIO0 like a CYD's.
+#if defined(ESP32) && (!defined(SQW_S3) || defined(FREENOVE_S3_35)) && !defined(CROWPANEL7)
 #define SQW_BOOT_BTN 1
 #else
 #define SQW_BOOT_BTN 0
@@ -2816,15 +2842,20 @@ static void sticksPowerUp() {
 }
 #endif
 
-#if defined(FREENOVE_S3)
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
 // The Freenove S3's battery: a 1-cell LiPo on its JST, a TP4054 charging it
 // from USB, and a 200K/200K divider from the cell to GPIO9 (ADC1, so WiFi does
-// not take it away). No fuel gauge, and the charger's CHRG line goes to an LED
+// not take it away) -- GPIO8 on the 3.5", per Freenove's battery sketch.
+#if defined(FREENOVE_S3_35)
+#define BOARD_BAT_ADC 8
+#else
+#define BOARD_BAT_ADC 9
+#endif No fuel gauge, and the charger's CHRG line goes to an LED
 // rather than a GPIO -- so a voltage and an estimate from it, never "charging".
 // On the cable the cell reads the charger's ~4.2 V, which is the honest reading.
 static uint16_t boardBatteryMv() {
     uint32_t sum = 0;
-    for (int i = 0; i < 8; i++) sum += analogReadMilliVolts(9);
+    for (int i = 0; i < 8; i++) sum += analogReadMilliVolts(BOARD_BAT_ADC);
     return (uint16_t)(sum / 8 * 2);   // the divider halves it
 }
 // Resting LiPo, per cell: rough, but a percent that moves the right way.
@@ -3654,6 +3685,11 @@ void setup() {
     // ST7796U and will lock up an ST7789 panel; do not re-add it unless
     // we confirm the panel is actually ST7796.
     tft.setRotation(screenRotation);
+    {
+        // The short side decides it, so it holds in every rotation.
+        const int sw = tft.width(), sh = tft.height();
+        Theme::setLarge((sw < sh ? sw : sh) >= 320);
+    }
 #if defined(SQW_SMALL)
     Theme::setRotateIconVisible(false);
     Theme::setCompact(true);
@@ -3797,9 +3833,11 @@ void setup() {
     // 16-bit — the full 16-bit buffer didn't fit in the available
     // contiguous heap on this board.
     frame.setColorDepth(8);
-#if defined(SQW_S3) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
+#if (defined(SQW_S3) && !defined(FREENOVE_S3_35)) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
     // 57.6 KB fits in internal RAM with room to spare (75 KB at 320x240), and a sprite in
-    // PSRAM pushes slower and cannot go by DMA. Keep it inside.
+    // PSRAM pushes slower and cannot go by DMA. Keep it inside. (Not the
+    // Freenove 3.5": its 154 KB frame goes to PSRAM on purpose, and the QSPI
+    // push converts it through internal bounce buffers.)
     //
     // CrowPanel: not an economy but the fix for a twitching picture -- the
     // panel's DMA reads its framebuffer from PSRAM, and the UI's scattered
@@ -3926,6 +3964,23 @@ void setup() {
 #else
     Serial.println("StickS3 -- no touch panel; buttons on GPIO11 and GPIO12.");
 #endif
+#elif defined(FREENOVE_S3_35)
+    // The Freenove S3 3.5"'s touch is in the ST77922 itself, on I2C SDA 38 /
+    // SCL 39 at 0x55, reset on GPIO48, interrupt on GPIO47 (unused: polled).
+    // The ES8311 codec shares the bus at 0x18.
+    St77922Touch::begin(38, 39, 48, 47);
+    // That pulsed the chip's reset, which may be the display's too on a
+    // TDDI part: set the panel up again as a precaution, put its inversion
+    // back, and forget what it was showing.
+    FramePush::busLock();
+    St77922::reinit();
+    FramePush::busUnlock();
+    tft.invertDisplay(PANEL_NEEDS_INVERSION != Settings::inverted());
+    FramePush::invalidate();
+    usingCapTouch = St77922Touch::probe();
+    Serial.println(usingCapTouch ? "Freenove S3 3.5 -- ST77922 touch answered."
+                                 : "Freenove S3 3.5 -- ST77922 touch did not answer; no touch.");
+    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
 #elif defined(FREENOVE_S3)
     // The Freenove S3 2.8"'s FT6336, on I2C SDA 16 / SCL 15 at 0x38, reset on
     // GPIO18 (active low). The ES8311 codec shares the bus at 0x18. FNK0104A
@@ -3935,7 +3990,7 @@ void setup() {
     usingCapTouch = CapTouch::probe();
     Serial.println(usingCapTouch ? "Freenove S3 -- FT6336 capacitive touch answered."
                                  : "Freenove S3 -- FT6336 did not answer; no touch (FNK0104A?).");
-    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO9 %u mV)\n", b, (unsigned)analogReadMilliVolts(9)); }
+    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
 #elif defined(TOUCH_ON_DISPLAY_BUS)
     // AWOK's XPT2046 sits on the display's own shared VSPI bus (TOUCH_CS=21,
     // already armed by TFT_eSPI itself once awok_user_setup.h's #define
@@ -3981,9 +4036,10 @@ void setup() {
         uint32_t windowStart = millis();
         while (millis() - windowStart < 1200) {
             int16_t a, b;
-#if defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C) || defined(SQW_SMALL)
-            // The GT911 is neither of the two below; the two-way dispatch
-            // polled a capacitive controller that is not on this bus.
+#if defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C) || defined(SQW_SMALL) || defined(FREENOVE_S3_35)
+            // The GT911 (and the ST77922's touch) is neither of the two
+            // below; the two-way dispatch polled a capacitive controller that
+            // is not on this bus, a hundred bus errors a boot.
             bool down = readTouchRaw(a, b);
 #else
             bool down = usingCapTouch ? rawReadCap(a, b) : rawReadResistive(a, b);
@@ -4030,18 +4086,19 @@ void setup() {
     // injected against the compiled-in ranges -- a calibration screen would
     // just sit there waiting for a finger.
     initTouchFit();
-#if defined(ESP32) && !defined(CROWPANEL7) && !defined(SQW_SMALL)   // nothing to calibrate on a stick with no touch
+#if defined(ESP32) && !defined(CROWPANEL7) && !defined(SQW_SMALL) && !defined(FREENOVE_S3_35)   // nothing to calibrate on a stick with no touch
     if (s_calSource != CalSource::SAVED) {
         Serial.println("Touch: no five-target calibration yet -- running it now.");
         runTouchCalibration();
     }
 #endif
-#if defined(CROWPANEL7)
-    // Never on first boot here. The GT911 reports panel pixels, so the
-    // compiled-in fit is already the identity and there is nothing to
-    // calibrate -- making someone tap five targets would only replace an
-    // exact mapping with a hand-aimed one. SETTINGS can still run it.
-    Serial.println("Touch: GT911 reports panel pixels; no calibration needed.");
+#if defined(CROWPANEL7) || defined(FREENOVE_S3_35)
+    // Never on first boot here. The GT911 (and the ST77922's own touch)
+    // reports panel pixels, so the compiled-in fit is already the identity
+    // and there is nothing to calibrate -- making someone tap five targets
+    // would only replace an exact mapping with a hand-aimed one. SETTINGS
+    // can still run it.
+    Serial.println("Touch: the panel reports pixels; no calibration needed.");
 #endif
 
     // Seed the PRNG so the digital rain starts in a fresh-looking state
@@ -4884,6 +4941,7 @@ static void bootButtonTick(uint32_t now) {
 }
 #endif
 #endif
+
 
 void loop() {
     // Cheap and unconditional: available() is a register read, and this
@@ -8025,6 +8083,8 @@ void loop() {
             info.boardName = "StickS3 LAB";
 #elif defined(CARDPUTER_ADV)
             info.boardName = "Cardputer ADV LAB";
+#elif defined(FREENOVE_S3_35)
+            info.boardName = "freenove-s3-35 BETA";
 #elif defined(CYD35C)
             info.boardName = "cyd35c BETA";
 #elif defined(CYD35)

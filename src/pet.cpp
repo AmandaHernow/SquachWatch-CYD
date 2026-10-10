@@ -14,6 +14,31 @@
 
 namespace Pet {
 
+// ---- the zoom -------------------------------------------------------------
+// On the large panels the pets live in a world half the screen's size: they
+// draw exactly as they always have, into a layer half as wide and half as
+// tall, and ui_clear doubles that layer onto the screen -- every pet, its
+// balloons and its throws twice the size, with no pet drawn differently.
+// Everything that crosses between that world and the screen goes through
+// here: Squachy's position on the way in, divided; a pet's position on the
+// way out (where it landed, where to poke it), multiplied; and a finger,
+// divided, at the touch functions below.
+static int s_k = 1;
+void setZoom(int k) { s_k = k < 1 ? 1 : k; }
+int  zoom()         { return s_k; }
+static bool zFootprint(int& cx, int& halfW, int& top, int& bot) {
+    if (!Squachy::lastFootprint(cx, halfW, top, bot)) return false;
+    cx /= s_k; halfW /= s_k; top /= s_k; bot /= s_k;
+    return true;
+}
+static int  zCrownY() { return Squachy::crownY() / s_k; }
+static bool zChainPoint(int& x, int& y) {
+    if (!Squachy::chainPoint(x, y)) return false;
+    x /= s_k; y /= s_k;
+    return true;
+}
+static void zLandedAt(int x) { Squachy::petLandedAt(x * s_k); }
+
 // ---- his material -------------------------------------------------------
 // Kept short on purpose. The bubble sits beside a forty-pixel sprite, and
 // anything much past thirty characters stops looking like it came out of
@@ -415,6 +440,7 @@ static void clipSay(const char* line, uint32_t now, bool caught) {
 }
 
 bool clippyHit(int x, int y) {
+    x /= s_k; y /= s_k;
     if (ballOut(millis())) return ballHit(x, y);
     if (toasterOn()) return toasterHit(x, y);
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return false;
@@ -431,15 +457,21 @@ void clippyPoke(uint32_t now) {
     s_cPoke++;
 }
 
-bool clippyCenter(int& x, int& y) {
+static bool clippyCenterZ(int& x, int& y) {
     if (ballOut(millis())) { if (s_jX < -50) return false; x = s_jX; y = s_jY - s_jR; return true; }
     if (toasterOn()) return toasterCenter(x, y);
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return false;
     x = s_cX + 11; y = s_cY + 24;
     return true;
 }
+bool clippyCenter(int& x, int& y) {
+    if (!clippyCenterZ(x, y)) return false;
+    x *= s_k; y *= s_k;
+    return true;
+}
 
 void clippyGrab(int x, int y, uint32_t now) {
+    x /= s_k; y /= s_k;
     if (ballOut(now)) { s_jGrab = true; return; }
     if (toasterOn()) { toasterGrab(x, y, now); return; }
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return;
@@ -450,6 +482,7 @@ void clippyGrab(int x, int y, uint32_t now) {
 }
 
 void clippyDrag(int x, int y, uint32_t now) {
+    x /= s_k; y /= s_k;
     if (s_jGrab) return;
     if (toasterOn()) { toasterDrag(x, y, now); return; }
     if (s_cTh != ClipThrow::HELD) return;
@@ -663,7 +696,7 @@ static void clipBalloon(TFT_eSPI& t, const char* s, int clipX, int clipY, int sc
 
 static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     int cx, halfW, top, bot;
-    if (!Squachy::lastFootprint(cx, halfW, top, bot)) { s_cX = -100; return; }
+    if (!zFootprint(cx, halfW, top, bot)) { s_cX = -100; return; }
     (void)top;
     bot = floorY;     // the pets' own line, not Squachy's feet
     const bool sqAway = Squachy::isHeld() || Squachy::thrown();
@@ -760,7 +793,7 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
                     s_cfY = floorY;
                     s_cSqAt = now;
                     s_cSqK = s_cvY > 0.9f ? 1.0f : s_cvY / 0.9f;
-                    if (s_cBounces == 0 && s_cFlung) Squachy::petLandedAt((int)s_cfX + 11);
+                    if (s_cBounces == 0 && s_cFlung) zLandedAt((int)s_cfX + 11);
                     if (s_cvY > 0.2f && s_cBounces < 5) {
                         s_cvY = -s_cvY * 0.5f;
                         s_cvX *= 0.75f;
@@ -989,7 +1022,7 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
     }
     if (which == Squachy::PetId::YETI) {
         int ycx, yhalfW, ytop, ybot;
-        if (!Squachy::lastFootprint(ycx, yhalfW, ytop, ybot)) return;
+        if (!zFootprint(ycx, yhalfW, ytop, ybot)) return;
         if (Squachy::isHeld()) { s_yPhase = YPhase::AWAY; return; }
         (void)ytop; (void)ybot;
         yetiTick(t, now, screenW, ycx, yhalfW, bandBottom);
@@ -1001,7 +1034,7 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
     // this rather than off constants, so bob, squash and his idle amble
     // all come along for free.
     int cx, halfW, top, bot;
-    if (!Squachy::lastFootprint(cx, halfW, top, bot)) return;
+    if (!zFootprint(cx, halfW, top, bot)) return;
     bot = bandBottom;     // the pets' own line, not Squachy's feet
 
     // Not while he is being carried or is dangling from something. A pet
@@ -1016,7 +1049,7 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
     // makes riding the bob free.
     (void)top;
     const float ground = (float)(bot - SPR);                       // feet on the floor
-    const float crown  = (float)Squachy::crownY();                 // top of his head
+    const float crown  = (float)zCrownY();                 // top of his head
     // Feet exactly on the crown. No fudge needed now that this is the real
     // drawn head rather than a hit box: his crest spikes rise either side.
     // Feet a little INTO the fur, not balanced on the skull line.
@@ -1194,6 +1227,19 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
         (void)bandTop;
         bubble(t, bx, by, screenW, QUIPS[s_quip]);
     }
+}
+
+// Whether tick() can draw anything at all this frame: the same early returns
+// it makes, in the same order. False is the common case -- no pet earned or
+// chosen -- and lets the caller skip the double-size layer entirely rather
+// than clear and scan 38 KB to find it empty (about five frames a second on
+// the 3.5", measured 2026-10-09).
+bool anyOut(uint32_t now) {
+    if (ballOut(now)) return true;
+    const Squachy::PetId which = Squachy::petChoice();
+    if (which == Squachy::PetId::CLIPPY)  return Squachy::clippyUnlocked();
+    if (which == Squachy::PetId::TOASTER) return Squachy::toasterUnlocked();
+    return Squachy::petUnlocked() && which != Squachy::PetId::OFF;
 }
 
 }  // namespace Pet

@@ -7,6 +7,10 @@
 #include <esp_heap_caps.h>
 #include <driver/spi_master.h>
 #include <string.h>
+#endif
+#if SQW_PUSH_QSPI
+#include "st77922_qspi.h"
+#elif defined(NM_CYD_C5) || SQW_PUSH_DMA_ONLY
 // The driver's device handle: a global in the processor port the library
 // compiles in, outside any namespace.
 extern spi_device_handle_t dmaHAL;
@@ -266,6 +270,94 @@ static int32_t   s_bounceW  = 0;
 static int8_t    s_dmaState = 0;             // 0 untried, 1 on, -1 not available
 static const int32_t CHUNK_ROWS = 8;
 
+#if SQW_PUSH_QSPI
+// Panel rows a chunk: 32 x 320 x 2 bytes, 20 KB a buffer. Wider than the SPI
+// boards' eight because in landscape a chunk of panel rows is a run of 32
+// logical COLUMNS, and 32 bytes of a logical row is one cache line of the
+// frame in PSRAM -- one fetch per logical row per chunk instead of one per
+// pixel, which is the difference between a push and a crawl.
+static const int32_t QSPI_CHUNK_ROWS = 32;
+
+static bool pushDma(TFT_eSPI&, int32_t) {
+    if (s_dmaState) return s_dmaState > 0;
+    s_dmaState = -1;
+    if (!St77922::ready()) { Serial.println("[push] QSPI: the panel never came up"); return false; }
+    for (int k = 0; k < 2; k++)
+        s_bounce[k] = (uint16_t*)heap_caps_malloc((size_t)St77922::PANEL_W * QSPI_CHUNK_ROWS * sizeof(uint16_t),
+                                                  MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (!s_bounce[0] || !s_bounce[1]) { Serial.println("[push] QSPI: no room for the bounce buffers"); return false; }
+    s_dmaState = 1;
+    Serial.printf("[push] QSPI on: %d-row chunks of %u bytes, heap %lu\n",
+                  (int)QSPI_CHUNK_ROWS, (unsigned)(St77922::PANEL_W * QSPI_CHUNK_ROWS * 2), (unsigned long)ESP.getFreeHeap());
+    return true;
+}
+
+// Logical rows [r0, r1) of a w x h frame in rotation `rot`, to the panel.
+// The panel is addressed in its own portrait frame, so a span of logical
+// rows is a band of panel rows in portrait and a band of panel COLUMNS in
+// landscape; the window is set once and the band streams out in chunks of
+// panel rows, each converted from the 8-bit frame as it goes. The mapping is
+// touch_fit.h's screenToNative, the same one St77922TFT::toPanel() uses for
+// rectangles, so a tap lands where the pixel went in all four rotations.
+static void pushSpanQspi(const uint8_t* src, int32_t w, int32_t h, uint8_t rot, int32_t r0, int32_t r1) {
+    (void)h;
+    const int32_t W = St77922::PANEL_W, H = St77922::PANEL_H;
+    int32_t px0, py0, px1, py1;
+    switch (rot & 3) {
+        case 0:  px0 = 0;      px1 = w - 1;      py0 = r0;     py1 = r1 - 1;     break;
+        case 1:  px0 = W - r1; px1 = W - 1 - r0; py0 = 0;      py1 = w - 1;      break;
+        case 2:  px0 = 0;      px1 = w - 1;      py0 = H - r1; py1 = H - 1 - r0; break;
+        default: px0 = r0;     px1 = r1 - 1;     py0 = 0;      py1 = w - 1;      break;
+    }
+    St77922::setWindow((int16_t)px0, (int16_t)py0, (int16_t)px1, (int16_t)py1);
+    const int32_t wOut = px1 - px0 + 1;
+    bool first = true;
+    int  k = 0;
+    for (int32_t py = py0; py <= py1; py += QSPI_CHUNK_ROWS, k++) {
+        const int32_t left = py1 - py + 1;
+        const int32_t n = left < QSPI_CHUNK_ROWS ? left : QSPI_CHUNK_ROWS;
+        uint16_t* b = s_bounce[k & 1];
+        switch (rot & 3) {
+            case 0:
+                for (int32_t i = 0; i < n; i++) {
+                    const uint8_t* s = src + (size_t)(py + i) * (size_t)w;
+                    uint16_t* d = b + i * wOut;
+                    for (int32_t x = 0; x < wOut; x++) d[x] = s_lut[s[x]];
+                }
+                break;
+            case 2:
+                for (int32_t i = 0; i < n; i++) {
+                    const uint8_t* s = src + (size_t)(H - 1 - (py + i)) * (size_t)w;
+                    uint16_t* d = b + i * wOut;
+                    for (int32_t x = 0; x < wOut; x++) d[x] = s_lut[s[w - 1 - x]];
+                }
+                break;
+            case 1:
+                // Panel row py+i is logical column py+i; panel column px is
+                // logical row W-1-px. One cache line of each logical row.
+                for (int32_t ly = r0; ly < r1; ly++) {
+                    const uint8_t* s = src + (size_t)ly * (size_t)w + py;
+                    uint16_t* d = b + ((W - 1 - ly) - px0);
+                    for (int32_t i = 0; i < n; i++) d[i * wOut] = s_lut[s[i]];
+                }
+                break;
+            default:
+                // Panel row py+i is logical column w-1-(py+i); panel column
+                // px is logical row px.
+                for (int32_t ly = r0; ly < r1; ly++) {
+                    const uint8_t* s = src + (size_t)ly * (size_t)w + (w - 1 - py);
+                    uint16_t* d = b + (ly - px0);
+                    for (int32_t i = 0; i < n; i++) d[i * wOut] = s_lut[s[-i]];
+                }
+                break;
+        }
+        St77922::queuePixels(b, (size_t)n * (size_t)wOut, first);
+        first = false;
+    }
+    St77922::wait();
+}
+#else
+
 static bool pushDma(TFT_eSPI& tft, int32_t w) {
     if (s_dmaState) return s_dmaState > 0 && s_bounceW == w;
     s_dmaState = -1;
@@ -358,6 +450,7 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
     // its S3 processor port) clears SPI_DMA_CONF_REG after every transaction,
     // so its register-fed writes work again without any help from here.
 }
+#endif  // !SQW_PUSH_QSPI
 #endif  // SQW_PUSH_DMA
 
 #if defined(NM_CYD_C5)
@@ -415,7 +508,16 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
     if (total % PX_PER_BURST != 0) return false;
 
     // A span has to be whole bursts: 320 wide, any row is; 240 wide, two.
+#if SQW_PUSH_QSPI
+    // On the ST77922 a span of logical rows is a band of panel COLUMNS in
+    // landscape, and the panel keeps its pixels in pairs: a window one
+    // column wide, or starting on an odd column, came out as a smear across
+    // the top of the screen (the title bar's rows, changing every frame).
+    // Four rows at a time keeps every window even on both edges.
+    const int32_t align = 4;
+#else
     const int32_t align = (int32_t)(PX_PER_BURST / gcd32((uint32_t)w, PX_PER_BURST));
+#endif
 
     // A frame is every band of it, so the periodic full refresh counts pushes
     // rather than frames: 64 pushes is 64 frames on one band and 32 on two.
@@ -455,13 +557,17 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
         // for the sizes this is built for) becomes a full push.
         for (int i = 0; i < n; i++)
             if (((uint32_t)(spans[i].r1 - spans[i].r0) * (uint32_t)w) % PX_PER_BURST) { spans[0].r0 = 0; spans[0].r1 = h; n = 1; break; }
+#if !SQW_PUSH_QSPI
         tft.startWrite();
+#endif
 #if SQW_PUSH_DMA
         // By DMA when the driver will have it; the register push, with its
         // raised clock, when not. The driver runs its own clock (see
         // SQW_C5_DMA_HZ), so the raise is only for the register path.
         const bool dma = pushDma(tft, w);
-#if SQW_PUSH_DMA_ONLY
+#if SQW_PUSH_QSPI
+        if (!dma || x != 0 || y != 0) return false;   // whole frames only here
+#elif SQW_PUSH_DMA_ONLY
         // No register push on this chip: the caller's pushSprite() instead.
         if (!dma) { tft.endWrite(); return false; }
 #endif
@@ -475,7 +581,7 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
         // Inside the transaction, after beginTransaction has had its say.
         const uint32_t c5pcr = sqwC5SpiClockRaise();
 #endif
-#if SQW_PUSH_DMA
+#if SQW_PUSH_DMA && !SQW_PUSH_QSPI
         // The bus for the whole frame: the driver's per-transfer lock is a
         // scheduling point, and on one core that is where the radio tasks
         // get in between chunks.
@@ -483,8 +589,14 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
 #endif
         for (int i = 0; i < n; i++) {
             const int32_t r0 = spans[i].r0, r1 = spans[i].r1;
+#if SQW_PUSH_QSPI
+            pushSpanQspi(src, w, h, tft.getRotation(), r0, r1);
+            s_lastRows += r1 - r0;
+            continue;
+#else
             tft.setAddrWindow(x, y + r0, w, r1 - r0);
-#if SQW_PUSH_DMA
+#endif
+#if SQW_PUSH_DMA && !SQW_PUSH_QSPI
             if (dma) {
                 pushRowsDma(tft, src + (size_t)r0 * (size_t)w, w, r1 - r0);
                 s_lastRows += r1 - r0;
@@ -515,13 +627,15 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
             s_lastRows += r1 - r0;
 #endif  // !SQW_PUSH_DMA_ONLY
         }
-#if SQW_PUSH_DMA
+#if SQW_PUSH_DMA && !SQW_PUSH_QSPI
         if (dma) spi_device_release_bus(dmaHAL);
 #endif
 #if defined(NM_CYD_C5)
         sqwC5SpiClockRestore(c5pcr);
 #endif
+#if !SQW_PUSH_QSPI
         tft.endWrite();
+#endif
         SQW_PUSH_CHARGE(s_wireUs, tWire);
     }
     s_valid  = true;
@@ -552,14 +666,16 @@ static int32_t           s_jobW = 0, s_jobH = 0, s_jobX = 0, s_jobY = 0;
 static void pusherTask(void*) {
     for (;;) {
         xSemaphoreTake(s_go, portMAX_DELAY);
-        xSemaphoreTake(s_bus, portMAX_DELAY);
+        xSemaphoreTakeRecursive(s_bus, portMAX_DELAY);
         if (!pushNow(*s_tft, s_jobSrc, s_jobW, s_jobH, s_jobX, s_jobY)) {
+#if !SQW_PUSH_QSPI
             // A shape it does not know, or the switch is off: the library's
             // own 8-bit image push, from here, so the frame still arrives.
             s_tft->pushImage(s_jobX, s_jobY, s_jobW, s_jobH, (uint8_t*)s_jobSrc, true, nullptr);
+#endif
             s_valid = false;
         }
-        xSemaphoreGive(s_bus);
+        xSemaphoreGiveRecursive(s_bus);
         xSemaphoreGive(s_done);
     }
 }
@@ -569,7 +685,9 @@ bool asyncBegin(TFT_eSPI& tft) {
     s_tft  = &tft;
     s_go   = xSemaphoreCreateBinary();
     s_done = xSemaphoreCreateBinary();
-    s_bus  = xSemaphoreCreateMutex();
+    // Recursive: on the QSPI board a direct draw takes it from inside a
+    // busLock() the loop already holds (main.cpp's "straight to the panel").
+    s_bus  = xSemaphoreCreateRecursiveMutex();
     if (!s_go || !s_done || !s_bus) return false;
     xSemaphoreGive(s_done);                  // nothing in flight yet
     // Above the loop task (1), below the radios: it wakes for a fifth of a
@@ -595,8 +713,8 @@ void asyncWait() {
     xSemaphoreGive(s_done);
 }
 
-void busLock()   { if (s_bus) xSemaphoreTake(s_bus, portMAX_DELAY); }
-void busUnlock() { if (s_bus) xSemaphoreGive(s_bus); }
+void busLock()   { if (s_bus) xSemaphoreTakeRecursive(s_bus, portMAX_DELAY); }
+void busUnlock() { if (s_bus) xSemaphoreGiveRecursive(s_bus); }
 #else
 bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }

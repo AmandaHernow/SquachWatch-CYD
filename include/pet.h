@@ -21,6 +21,15 @@ namespace Pet {
     // Does nothing at all unless a pet is unlocked AND switched on, so the
     // call site does not need to check either.
     void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom);
+    // 2 on the large panels: the pets live in a half-size world that the
+    // caller doubles onto the screen (see pet.cpp's zoom). Positions in and
+    // out of this module stay in SCREEN pixels either way; tick()'s
+    // arguments are the exception, in the pets' own (layer) pixels.
+    void setZoom(int k);
+    int  zoom();
+    // Whether tick() can draw anything this frame (a pet earned and chosen,
+    // or the ball out). The caller skips the double-size layer when not.
+    bool anyOut(uint32_t now);
 
     // Cancels whatever he is doing and puts him off screen. Used when the
     // screen changes underneath him, so he does not reappear mid-jump on a

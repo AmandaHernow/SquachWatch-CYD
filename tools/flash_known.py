@@ -54,6 +54,10 @@ BOARDS = {
     # flash, ILI9341, FT6336 capacitive touch, native USB with its MAC as the
     # serial number. greasy-electronics' BETA build, first run here 2026-10-09.
     "28:84:85:42:ef:28": ("freenove-s3", "Freenove ESP32-S3 Display 2.8in (FNK0104B), native USB"),
+    # Freenove ESP32-S3 Display 3.5in (FNK0104N, Amazon's 3.5in of the same
+    # line): ST77922 over QSPI, touch in the panel chip. Bring-up began
+    # 2026-10-09.
+    "b8:1f:3f:c3:fd:58": ("freenove-s3-35", "Freenove ESP32-S3 Display 3.5in (FNK0104N), native USB"),
     # 88:57:21:2e:e6:e0 runs SquachEmit, not this firmware. It is the only
     # CAPACITIVE 2.8in; to test capacitive touch, list it here as cyd-fast
     # for the test and comment it out again after (done 2026-09-21).

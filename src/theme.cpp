@@ -384,6 +384,9 @@ void drawListRowPanel(TFT_eSPI& t, int w, int y, int hgt) {
 static bool s_compact = false;
 void setCompact(bool on) { s_compact = on; }
 bool compact()           { return s_compact; }
+static bool s_large = false;
+void setLarge(bool on)   { s_large = on; }
+bool large()             { return s_large; }
 int  listRowPad()        { return s_compact ? 5 : 10; }
 int pinnedBackH(int panelW) { return s_compact ? 18 : (panelW >= 400 ? 36 : PINNED_BACK_H); }
 

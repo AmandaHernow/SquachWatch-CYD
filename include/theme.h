@@ -157,6 +157,12 @@ namespace Theme {
     bool stillBackdrop(TFT_eSPI& t);
     void setCompact(bool on);
     bool compact();
+    // A panel 320 or more on its SHORT side: the 3.5" boards, 480x320 either
+    // way up. The chrome that was drawn for 320x240 -- the XP tiles, his
+    // bubble, the pets -- is drawn larger there, because at the same pixel
+    // size it reads as half the size on the bigger glass. Set once at boot.
+    void setLarge(bool on);
+    bool large();
     int  listRowPad();          // added to the font height for a list row
     void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color);
 

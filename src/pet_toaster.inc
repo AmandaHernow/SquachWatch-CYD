@@ -382,7 +382,7 @@ static void toastCrumbs(int cx, int cy, uint32_t now) {
 
 static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     int cx, halfW, top, bot;
-    if (!Squachy::lastFootprint(cx, halfW, top, bot)) { s_tX = -100; return; }
+    if (!zFootprint(cx, halfW, top, bot)) { s_tX = -100; return; }
     (void)top;
     bot = floorY;
     const bool sqAway = Squachy::isHeld() || Squachy::thrown();
@@ -522,7 +522,7 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
                     s_tSqK = s_tvY > 0.9f ? 1.0f : s_tvY / 0.9f;
                     if (s_tBounces == 0) {
                         toastCrumbs((int)s_tfX + TOAST_W / 2, (int)s_tfY + TOAST_H, now);
-                        if (s_tFlung) Squachy::petLandedAt((int)s_tfX + TOAST_W / 2);
+                        if (s_tFlung) zLandedAt((int)s_tfX + TOAST_W / 2);
                         if (s_tFlung) {
                             s_tlLive = true; s_tlBorn = now;
                             s_tlX = s_tfX + 8; s_tlY = s_tfY; s_tlVX = -0.03f; s_tlVY = -0.4f;
