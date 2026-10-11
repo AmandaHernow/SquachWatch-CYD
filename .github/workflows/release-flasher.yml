@@ -622,8 +622,8 @@ jobs:
         run: |
           mkdir -p _site
           cp web-flasher/index.html _site/index.html
-          # next.html: the flasher laid out as three steps, served beside the
-          # real page for review (squachwatch.com/next.html) until it replaces it.
+          # next.html, the three-step layout, became index.html on 2026-10-11. A
+          # page put there again for review is served the same way.
           if [ -f web-flasher/next.html ]; then cp web-flasher/next.html _site/next.html; fi
           cp web-flasher/manifest-cyd.json _site/manifest-cyd.json
           cp web-flasher/manifest-cyd-ili9341.json _site/manifest-cyd-ili9341.json
