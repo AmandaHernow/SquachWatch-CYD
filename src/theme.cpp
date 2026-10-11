@@ -364,12 +364,31 @@ int  bubbleTextH()  { bubbleMeasure(); return s_bubAb + s_bubBb; }
 int  bubbleAscent() { bubbleMeasure(); return s_bubAb; }
 #endif
 
-void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color) {
-    t.setTextSize(1);
-    t.setTextColor(color, BG);
-    t.setCursor(8, LIST_TOP + (LIST_HEADING_H - t.fontHeight()) / 2);
-    t.print(text);
+// On the large panels the size-2 heading sits low in a taller band, clear of
+// the corner icons above it (TITLE_ICON_BAND_H), which a centred one touched.
+int listHeadingH() { return large() ? 20 : 14; }
+
+int listHeadingY(TFT_eSPI& t) {
+    return large() ? TITLE_ICON_BAND_H + (16 - t.fontHeight()) / 2
+                   : LIST_TOP + (listHeadingH() - t.fontHeight()) / 2;
 }
+
+void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color) {
+    t.setTextSize(large() ? 2 : 1);
+    t.setTextColor(color, BG);
+    t.setCursor(8, listHeadingY(t));
+    t.print(text);
+    t.setTextSize(1);
+}
+
+void bodyFontOn(TFT_eSPI& t) {
+    t.setTextFont(large() ? 2 : 1);
+    t.setTextSize(1);
+}
+void bodyFontOff(TFT_eSPI& t) { t.setTextFont(1); }
+int bodyY(int px)              { return large() ? px * 19 / 12 : px; }
+int dialogBtnH(int base)       { return large() ? base + 8 : base; }
+uint8_t upSize(uint8_t base)   { return large() ? base + 1 : base; }
 
 void drawListRowPanel(TFT_eSPI& t, int w, int y, int hgt) {
     // Four rows of backdrop between tiles, not two, so they read as tiles
@@ -442,7 +461,8 @@ void drawTitleBar(TFT_eSPI& t, const char* title) {
 }
 
 uint8_t uiTextSize(TFT_eSPI& t, uint8_t base) {
-    return (base == 1 && t.width() >= 400) ? 2 : base;
+    // The large panels in portrait too: 320 wide, but on 3.5" glass.
+    return (base == 1 && (t.width() >= 400 || large())) ? 2 : base;
 }
 
 uint8_t uiMenuTextSize(TFT_eSPI& t) {
@@ -466,7 +486,15 @@ void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
     uint8_t ts = uiTextSize(t, textSize);
     if (ts != textSize) {
         t.setTextSize(ts);
-        if (t.textWidth(label) > w - 6) ts = textSize;
+        if (t.textWidth(label) > w - 6 || t.fontHeight() > h - 2) ts = textSize;
+    }
+    // A large panel's label that cannot take size 2 gets the body font
+    // rather than the 8-row system font: about as wide, half again as tall.
+    bool body = false;
+    if (ts == 1 && textSize == 1 && large() && h >= 20) {
+        bodyFontOn(t);
+        body = t.textWidth(label) <= w - 6;
+        if (!body) bodyFontOff(t);
     }
     t.setTextSize(ts);
     t.setTextColor(fg, fill);
@@ -474,6 +502,7 @@ void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
     int th = t.fontHeight();
     t.setCursor(x + (w - tw) / 2, y + (h - th) / 2);
     t.print(label);
+    if (body) bodyFontOff(t);
 }
 
 void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
@@ -508,15 +537,55 @@ void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
     // the tell that it is a costume. Centred on the FACE rather than on the
     // whole rect, so the bevel does not pull the text off-centre, then the
     // one-pixel press offset on top.
+    // On the large panels the label is font 2, which is also nearer the
+    // proportional face Win95 itself used -- where the button is tall and
+    // wide enough for it; a squeezed one keeps the system font.
+    const uint8_t callerFont = t.textfont;
     t.setTextSize(1);
     t.setTextWrap(false);
     t.setTextColor(BLACK, W95_FACE);
+    const bool swapped = large() && h >= 20;
+    if (swapped) {
+        t.setTextFont(2);
+        if (t.textWidth(label) > w - 8) t.setTextFont(1);
+    }
     const int tw = t.textWidth(label);
     const int th = t.fontHeight();
     const int ox = sunken ? 1 : 0;
     t.setCursor(x + 2 + (w - 4 - tw) / 2 + ox,
                 y + 2 + (h - 4 - th) / 2 + ox);
     t.print(label);
+    if (swapped) t.setTextFont(callerFont);   // only ever touched here
+}
+
+int drawWin95Window(TFT_eSPI& t, int x, int y, int w, int h, const char* title) {
+    const uint16_t NAVY = 0x0010;          // System Properties' title bar
+    const int TB = 22;
+    t.fillRect(x + 2, y + 2, w - 4, h - 4, W95_FACE);
+    t.drawFastHLine(x, y, w, W95_HILITE);
+    t.drawFastVLine(x, y, h, W95_HILITE);
+    t.drawFastHLine(x, y + h - 1, w, W95_DKSHADOW);
+    t.drawFastVLine(x + w - 1, y, h, W95_DKSHADOW);
+    t.drawFastHLine(x + 1, y + 1, w - 2, W95_LIGHT);
+    t.drawFastVLine(x + 1, y + 1, h - 2, W95_LIGHT);
+    t.drawFastHLine(x + 1, y + h - 2, w - 2, W95_SHADOW);
+    t.drawFastVLine(x + w - 2, y + 1, h - 2, W95_SHADOW);
+    t.fillRect(x + 3, y + 3, w - 6, TB, NAVY);
+    const uint8_t callerFont = t.textfont;
+    t.setTextFont(2);
+    t.setTextSize(1);
+    t.setTextWrap(false);
+    t.setTextColor(WHITE, NAVY);
+    t.setCursor(x + 8, y + 3 + (TB - 16) / 2);
+    t.print(title);
+    t.setTextFont(callerFont);
+    const int cx = x + w - 6 - 18, cy = y + 6;
+    drawWin95Button(t, cx, cy, 18, TB - 6, "", false);
+    t.drawLine(cx + 5, cy + 4, cx + 11, cy + 10, W95_DKSHADOW);
+    t.drawLine(cx + 11, cy + 4, cx + 5, cy + 10, W95_DKSHADOW);
+    t.drawLine(cx + 6, cy + 4, cx + 12, cy + 10, W95_DKSHADOW);
+    t.drawLine(cx + 12, cy + 4, cx + 6, cy + 10, W95_DKSHADOW);
+    return y + 3 + TB + 6;
 }
 
 ButtonBarGeom computeButtonBar(int screenW, int screenH) {
@@ -4480,12 +4549,13 @@ void drawToast(TFT_eSPI& t, uint32_t now) {
     t.setTextSize(2);
     int bw = t.textWidth(s_toastHead) + 30;
     if (s_toastSub[0]) {
-        t.setTextSize(1);
+        bodyFontOn(t);
         const int sw = t.textWidth(s_toastSub) + 30;
         if (sw > bw) bw = sw;
+        bodyFontOff(t);
     }
     if (bw > w - 20) bw = w - 20;
-    const int bh = s_toastSub[0] ? 48 : 34;
+    const int bh = s_toastSub[0] ? (s_large ? 56 : 48) : 34;
     const int bx = (w - bw) / 2, by = (h - bh) / 2;
 
     t.fillRect(bx, by, bw, bh, BG);
@@ -4497,10 +4567,11 @@ void drawToast(TFT_eSPI& t, uint32_t now) {
     t.setCursor(bx + (bw - t.textWidth(s_toastHead)) / 2, by + 8);
     t.print(s_toastHead);
     if (s_toastSub[0]) {
-        t.setTextSize(1);
+        bodyFontOn(t);
         t.setTextColor(WHITE, BG);
         t.setCursor(bx + (bw - t.textWidth(s_toastSub)) / 2, by + 31);
         t.print(s_toastSub);
+        bodyFontOff(t);
     }
 }
 
@@ -9611,22 +9682,28 @@ void drawBangersOutline(TFT_eSPI& t, int x, int y, const char* s, uint16_t color
 // The strlen() check added below is the actual fix (forces a break the
 // moment the buffer itself would fill, independent of maxW); the wider
 // buffer just means that happens less often in the first place.
-uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
-                 char lines[][48], uint8_t maxLines) {
+// One body for both row widths: 48 for everything that has always used it,
+// 80 for running text on the large panels, where font 2 fits 70 letters to a
+// landscape line and a 48-letter row stopped every line two thirds across.
+template <size_t N>
+static uint8_t wrapInto(TFT_eSPI& t, const char* text, int maxW,
+                        char lines[][N], uint8_t maxLines) {
     // 320, not the original 160 -- fine for every short quip/bubble
     // this ran on originally, but LOG's MORE INFO panel passes real
     // paragraph-length explanations (the RSSI/confidence primer alone
     // is ~290 chars), which strncpy was silently truncating before a
-    // single word ever got wrapped.
-    char buf[320];
+    // single word ever got wrapped. The 80-letter form (the large panels)
+    // takes 640: the longest MORE INFO explanations run past 320, and with
+    // paging there is room to show every word of them.
+    char buf[N == 80 ? 640 : 320];
     strncpy(buf, text, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = 0;
 
     uint8_t n = 0;
-    char lineBuf[48] = "";
+    char lineBuf[N] = "";
     char* word = strtok(buf, " ");
     while (word) {
-        char trial[48];
+        char trial[N];
         if (lineBuf[0]) snprintf(trial, sizeof(trial), "%s %s", lineBuf, word);
         else            snprintf(trial, sizeof(trial), "%s", word);
         bool tooWide = lineBuf[0] &&
@@ -9646,6 +9723,15 @@ uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
     return n;
 }
 
+uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
+                 char lines[][48], uint8_t maxLines) {
+    return wrapInto<48>(t, text, maxW, lines, maxLines);
+}
+uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
+                 char lines[][80], uint8_t maxLines) {
+    return wrapInto<80>(t, text, maxW, lines, maxLines);
+}
+
 // Info panel geometry -- see theme.h's comment on drawInfoPanel() for
 // what this is/who uses it.
 static const uint8_t INFO_MAX_LINES = 7;
@@ -9660,10 +9746,15 @@ static void infoRects(int screenW, int screenH,
     // description text (size 1, see drawInfoPanel()) still needs real
     // room, and a small-margin modal reads fine here since it's the
     // only thing on screen while it's up.
+    // Wider and taller on the large panels, where the text is the body font.
+    // In portrait there it takes most of the height too: the text is
+    // size 2, 25 letters to a line, and the longest explanation needs 13.
+    const bool big = s_large;
     pw = screenW - 16;
-    if (pw > 300) pw = 300;
+    if (pw > (big ? 440 : 300)) pw = big ? 440 : 300;
     ph = screenH - 8;
-    if (ph > 260) ph = 260;
+    const int phMax = big ? (screenH > screenW ? 440 : 304) : 260;
+    if (ph > phMax) ph = phMax;
     px = (screenW - pw) / 2;
     py = (screenH - ph) / 2;
 
@@ -9673,10 +9764,10 @@ static void infoRects(int screenW, int screenH,
     squachyBaseY = py + 88;
     squachyWander = pw / 2 - 40;
     if (squachyWander < 0) squachyWander = 0;
-    textTop = py + 104;
+    textTop = py + (big ? 92 : 104);
     textMaxW = pw - 16;
 
-    btnH = 26;
+    btnH = big ? 32 : 26;
     btnW = pw - 20;
     btnX = px + 10;
     btnY = py + ph - btnH - 8;
@@ -9703,7 +9794,18 @@ bool infoPanelHitDismiss(int x, int y, int screenW, int screenH) {
     float squachyScale;
     infoRects(screenW, screenH, px, py, pw, ph, headingY, squachyCx, squachyBaseY, squachyScale, squachyWander,
               textTop, textMaxW, btnX, btnY, btnW, btnH);
-    return x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH;
+    if (!(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH)) return false;
+    // The large panels page their size-2 text the way the compact ones do:
+    // the button reads MORE until the last page.
+    if (s_large) {
+        static uint32_t last = 0;
+        const uint32_t now = millis();
+        if (now - last < 250) return false;     // one press, one page
+        last = now;
+        if (s_infoPage + 1 < s_infoPages) { s_infoPage++; return false; }
+        s_infoPage = 0;
+    }
+    return true;
 }
 
 void drawInfoPanel(TFT_eSPI& t, int w, int h, uint32_t now,
@@ -9763,20 +9865,43 @@ void drawInfoPanel(TFT_eSPI& t, int w, int h, uint32_t now,
 
     Squachy::drawWaving(t, squachyCx, squachyBaseY, now, squachyScale, nullptr, true, squachyWander);
 
-    t.setTextSize(1);
+    // The large panels set it at size 2, a page of as many lines as fit
+    // above the button; everywhere else the size-1 seven it always had.
+    t.setTextSize(s_large ? 2 : 1);
     t.setTextWrap(false);
     t.setTextColor(WHITE, BG);
-    char lines[INFO_MAX_LINES][48];
-    uint8_t n = wrapText(t, text, textMaxW, lines, INFO_MAX_LINES);
-    int ly = textTop;
-    for (uint8_t i = 0; i < n; i++) {
-        int lw = t.textWidth(lines[i]);
-        t.setCursor(px + (pw - lw) / 2, ly);
-        t.print(lines[i]);
-        ly += 12;
+    const int step = s_large ? t.fontHeight() + 3 : 12;
+    static const uint8_t WIDE_MAX = 32;
+    static char wide[WIDE_MAX][80];
+    char narrow[INFO_MAX_LINES][48];
+    int per = (btnY - 4 - textTop) / step;
+    if (per < 1) per = 1;
+    const uint8_t n = s_large ? wrapText(t, text, textMaxW, wide, WIDE_MAX)
+                              : wrapText(t, text, textMaxW, narrow, INFO_MAX_LINES);
+    int first = 0, last = n;
+    if (s_large) {
+        if (now - s_infoDrawnAt > 400) s_infoPage = 0;   // a new panel opens on page one
+        s_infoDrawnAt = now;
+        s_infoPages = (uint8_t)((n + per - 1) / per);
+        if (!s_infoPages) s_infoPages = 1;
+        if (s_infoPage >= s_infoPages) s_infoPage = 0;
+        first = s_infoPage * per;
+        last  = first + per < n ? first + per : n;
     }
+    int ly = textTop;
+    for (int i = first; i < last; i++) {
+        const char* line = s_large ? wide[i] : narrow[i];
+        int lw = t.textWidth(line);
+        t.setCursor(px + (pw - lw) / 2, ly);
+        t.print(line);
+        ly += step;
+    }
+    t.setTextSize(1);
 
-    drawButton(t, btnX, btnY, btnW, btnH, "[ GOT IT ]", false, 2);
+    char lbl[24];
+    if (s_large && s_infoPage + 1 < s_infoPages) snprintf(lbl, sizeof lbl, "[ MORE %u/%u ]", s_infoPage + 1, s_infoPages);
+    else                                         snprintf(lbl, sizeof lbl, "[ GOT IT ]");
+    drawButton(t, btnX, btnY, btnW, btnH, lbl, false, 2);
 }
 
 }  // namespace Theme

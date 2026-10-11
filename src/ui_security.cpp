@@ -13,7 +13,7 @@ static uint8_t rowCount() { return (uint8_t)SecurityRow::COUNT; }
 static SecurityRow rowAt(uint8_t i) { return (SecurityRow)i; }
 
 static void computeGeom(TFT_eSPI& t, int screenH, int& top, int& bodyBottom, int& rowH) {
-    top = TOP_MARGIN + Theme::LIST_HEADING_H;
+    top = TOP_MARGIN + Theme::listHeadingH();
     bodyBottom = screenH - Theme::pinnedBackH(t.width()) - 2;
     t.setTextSize(Theme::uiMenuTextSize(t));
     // Two pixels taller than the text strictly needs on each side: a 24 px

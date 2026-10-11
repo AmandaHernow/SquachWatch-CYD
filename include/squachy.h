@@ -434,6 +434,16 @@ namespace Squachy {
     // the top is the better trade than one Squachy -- and so all of them --
     // coming out smaller because of a hat.
     void setCompany(bool on);
+    // A multiplier on his size for the next tick() on a big panel, past the
+    // SIZE setting, held by the panel's width (half of it with company) and
+    // the height of the band he is handed. 1 is today's size. The main
+    // screen sets it for the 3.5" in portrait (ui_clear.cpp) and puts it
+    // back to 1 after; nothing else ever touches it.
+    void setSizeBoost(float k);
+    // How much of the panel's width each of them may take with company, for
+    // the boost's width limit. 0.5 by default: half each. The 3.5" in
+    // portrait asks for more and stands them closer, arms overlapping.
+    void setCompanyShare(float share);
 
     // True while the OTHER one is the one talking. It buys a slow nod, which
     // is the difference between a Squachy standing near a conversation and a

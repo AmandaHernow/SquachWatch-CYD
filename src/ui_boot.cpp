@@ -241,12 +241,14 @@ void uiBootTick(TFT_eSPI& t, uint32_t now) {
 #else
     snprintf(init, sizeof(init), "INITIALIZING...  %s", FIRMWARE_VERSION);
 #endif
+    Theme::bodyFontOn(t);
     int iw = t.textWidth(init);
-    t.setCursor((w - iw) / 2, h - 16);
+    t.setCursor((w - iw) / 2, h - t.fontHeight() - 8);
 #if defined(CYD35)
     t.setTextColor(Theme::AMBER);   // not the cyan the rest of the line uses
 #endif
     t.print(init);
+    Theme::bodyFontOff(t);
 
     // animated scanline sweeping top to bottom every 600 ms
     int phase = (int)((now / 600) % (uint32_t)h);

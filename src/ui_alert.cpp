@@ -423,14 +423,18 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
     const bool tiny = tinyAlert(h);
     const bool wide = (w >= 300 && w > h) || tiny;
     const int PLATE_X = tiny ? 6 : (wide ? 12 : 14);
-    const int PLATE_Y = stripHOf(w, h) + (tiny ? 4 : 12);
+    // Lower on the large panels: the FIRST / AT NIGHT line above it is the
+    // 16-row body font there, and at 12 it sat on the plate's top edge.
+    const int PLATE_Y = stripHOf(w, h) + (tiny ? 4 : Theme::large() ? 20 : 12);
+    // The large panels in portrait take the big plate too: full width there,
+    // and the size-2 readout fits it (the MAC is 204 of its 292 pixels).
+    const bool  bigPlate = wideAlert(w) || (Theme::large() && !wide);
     const int PLATE_W = tiny ? 156 : (wideAlert(w) ? 250 : (wide ? 168 : (w - 28)));
-    const int PLATE_H = tiny ? 70 : (wideAlert(w) ? 152 : 98);
+    const int PLATE_H = tiny ? 70 : (bigPlate ? 152 : 98);
 
     // Where each line sits inside the plate. The old numbers were measured
     // against a 98px card and a size-1 readout; a wide panel gets a 138px card
     // and a size-2 one, so they are re-measured rather than stretched.
-    const bool  bigPlate = wideAlert(w);
     const uint8_t readSz = bigPlate ? 2 : 1;
     const int NAME_DY  = tiny ? 22 : (bigPlate ?  46 : 38);
     const int MAC_DY   = tiny ? 32 : (bigPlate ?  66 : 50);
@@ -539,25 +543,28 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
         // AT NIGHT: they are about one catch, and this is about the room.
         char fl[32];
         snprintf(fl, sizeof fl, "* SPAM: %u FAKE TAGS *", (unsigned)s_spamFakes);
-        t.setTextSize(1);
+        Theme::bodyFontOn(t);
         t.setTextColor(Theme::RED, Theme::BG);
         t.setCursor(PLATE_X + (PLATE_W - t.textWidth(fl)) / 2, tiny ? PLATE_Y + NAME_DY : stripHOf(w, h) + 2);
         t.print(fl);
+        Theme::bodyFontOff(t);
     } else if (s_first || s_night) {
         const char* fl = (s_first && s_night) ? "* FIRST, AND AT NIGHT *"
                        : s_first ? "* FIRST OF ITS KIND *" : "* AT NIGHT *";
-        t.setTextSize(1);
+        Theme::bodyFontOn(t);
         t.setTextColor(Theme::VAPOR_YELLOW, Theme::BG);
         t.setCursor(PLATE_X + (PLATE_W - t.textWidth(fl)) / 2, tiny ? PLATE_Y + NAME_DY : stripHOf(w, h) + 2);
         t.print(fl);
+        Theme::bodyFontOff(t);
     } else if (s_lastFree) {
         // Shares the line, and loses it to FIRST or AT NIGHT, both of which
         // are about the catch itself. This one is housekeeping.
         const char* fl = "* QUIET UNLESS IT NEARS *";
-        t.setTextSize(1);
+        Theme::bodyFontOn(t);
         t.setTextColor(Theme::CYAN, Theme::BG);
         t.setCursor(PLATE_X + (PLATE_W - t.textWidth(fl)) / 2, tiny ? PLATE_Y + NAME_DY : stripHOf(w, h) + 2);
         t.print(fl);
+        Theme::bodyFontOff(t);
     }
 
     // ---- the gauge -----------------------------------------------------

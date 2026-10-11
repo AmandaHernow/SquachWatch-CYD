@@ -17,7 +17,7 @@ static DetectionType rowType(uint8_t i) { return (DetectionType)(i + 1); }
 // TFT_eSPI& since it depends on actual font metrics, shared by drawing
 // and hit-testing so they can't drift apart.
 static void computeGeom(TFT_eSPI& t, int screenH, int& top, int& bodyBottom, int& rowH) {
-    top = TOP_MARGIN + Theme::LIST_HEADING_H;
+    top = TOP_MARGIN + Theme::listHeadingH();
     bodyBottom = screenH - Theme::pinnedBackH(t.width()) - 2;
     t.setTextSize(Theme::uiMenuTextSize(t));
     // Two pixels taller than the text strictly needs on each side: a 24 px

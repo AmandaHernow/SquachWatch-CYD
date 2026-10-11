@@ -1190,7 +1190,7 @@ static uint8_t stickStopsBuild(StickPt* out, uint8_t cap) {
         } else if (!panel) {
             const int backH = Theme::pinnedBackH(w);
             add(w - 9, h - backH - 9, 1);                                   // more, below
-            add(w - 9, Theme::LIST_TOP + Theme::LIST_HEADING_H + 7, 2);     // and above
+            add(w - 9, Theme::LIST_TOP + Theme::listHeadingH() + 7, 2);     // and above
             add(w / 2, h - backH / 2);                                      // BACK
         }
         return n;
@@ -2850,9 +2850,11 @@ static void sticksPowerUp() {
 #define BOARD_BAT_ADC 8
 #else
 #define BOARD_BAT_ADC 9
-#endif No fuel gauge, and the charger's CHRG line goes to an LED
-// rather than a GPIO -- so a voltage and an estimate from it, never "charging".
-// On the cable the cell reads the charger's ~4.2 V, which is the honest reading.
+#endif
+// No fuel gauge, and the charger's CHRG line goes to an LED rather than a
+// GPIO -- so a voltage and an estimate from it, and "charging" only as a guess
+// from the voltage jumping (see boardBatteryState). On the cable the cell
+// reads the charger's ~4.2 V, which is the honest reading.
 static uint16_t boardBatteryMv() {
     uint32_t sum = 0;
     for (int i = 0; i < 8; i++) sum += analogReadMilliVolts(BOARD_BAT_ADC);
@@ -2881,6 +2883,54 @@ void boardBatteryLine(char* out, size_t n) {
                       (unsigned)(mv / 1000), (unsigned)(mv % 1000 / 10));
     }
     snprintf(out, n, "%s", line);
+}
+
+// The home screen's lava lamp (uiClearSetBatterySource). Read every two
+// seconds. With no CHRG pin, "on the cable" is inferred: plugging in lifts the
+// cell's voltage at once by the charge current through its own resistance,
+// and unplugging drops it again, so a climb of 40 mV over the last minute
+// says plugged in and a fall of 40 from the minute's top says unplugged. A
+// guess, and it can take a sample or two to notice.
+struct LampSample { uint32_t sec; uint16_t mv; uint8_t pct; bool chg; };
+static const uint8_t LAMP_LOG_N = 90;
+static LampSample s_lampLog[LAMP_LOG_N];
+static uint8_t    s_lampLogAt = 0, s_lampLogN = 0;
+static bool boardBatteryState(uint8_t& pct, bool& charging) {
+    static uint32_t at = 0;
+    static bool     has = false, chg = false;
+    static uint8_t  p = 0;
+    static uint16_t hist[30];
+    static uint8_t  hn = 0, hi = 0;
+    const uint32_t now = millis();
+    if (!at || now - at >= 2000) {
+        at = now ? now : 1;
+        const uint16_t mv = boardBatteryMv();
+        has = mv >= 2500;
+        if (has) {
+            p = boardBatteryPct(mv);
+            hist[hi] = mv; hi = (uint8_t)((hi + 1) % 30); if (hn < 30) hn++;
+            uint16_t lo = 0xFFFF, top = 0;
+            for (uint8_t i = 0; i < hn; i++) { if (hist[i] < lo) lo = hist[i]; if (hist[i] > top) top = hist[i]; }
+            if (!chg && mv >= lo + 40) chg = true;
+            else if (chg && mv + 40 <= top) chg = false;
+        } else { hn = 0; chg = false; }
+        s_lampLog[s_lampLogAt] = { now / 1000, mv, (uint8_t)(has ? p : 255), chg };
+        s_lampLogAt = (uint8_t)((s_lampLogAt + 1) % LAMP_LOG_N);
+        if (s_lampLogN < LAMP_LOG_N) s_lampLogN++;
+    }
+    pct = p; charging = chg;
+    return has;
+}
+
+// BATT on the console: the last three minutes of what the lamp was told,
+// oldest first. The cable IS the console, so plug back in and ask -- the
+// board keeps running on its cell in between, and keeps the log.
+static void boardBatteryPrintLog() {
+    Serial.printf("[batt] lamp log, %u samples two seconds apart, oldest first: up(s) mV %% cable\n", (unsigned)s_lampLogN);
+    for (uint8_t i = 0; i < s_lampLogN; i++) {
+        const LampSample& r = s_lampLog[(s_lampLogAt + LAMP_LOG_N - s_lampLogN + i) % LAMP_LOG_N];
+        Serial.printf("[batt] %lu %u %u %s\n", (unsigned long)r.sec, (unsigned)r.mv, (unsigned)r.pct, r.chg ? "CABLE" : "-");
+    }
 }
 #endif
 
@@ -3165,6 +3215,25 @@ void twatchBatteryLine(char* out, size_t n) {
                       (unsigned)(s_pmu.getBattVoltage() % 1000 / 10));
     }
     snprintf(out, n, "%s", line);
+}
+
+// The home screen's lava lamp (uiClearSetBatterySource): the power chip's own
+// percent, and the cable counted as charging -- full on the cable still bubbles.
+static bool twatchBatteryState(uint8_t& pct, bool& charging) {
+    if (!s_pmuOk || !s_pmu.isBatteryConnect()) return false;
+    static uint32_t at = 0;
+    static int      p = -1;
+    static bool     chg = false;
+    const uint32_t now = millis();
+    if (!at || now - at >= 2000) {   // three I2C reads, every two seconds
+        at = now ? now : 1;
+        p = s_pmu.getBatteryPercent();
+        chg = s_pmu.isCharging() || s_pmu.isVbusIn();
+    }
+    if (p < 0) return false;
+    pct = (uint8_t)(p > 100 ? 100 : p);
+    charging = chg;
+    return true;
 }
 
 // The chip's own temperature sensor, read at most every two seconds: the
@@ -3569,6 +3638,7 @@ void setup() {
     printBootBanner();
 #if defined(TWATCH_S3)
     twatchPowerUp();
+    uiClearSetBatterySource(twatchBatteryState);
 #endif
 #if defined(STICKS3)
     sticksPowerUp();
@@ -3981,6 +4051,7 @@ void setup() {
     Serial.println(usingCapTouch ? "Freenove S3 3.5 -- ST77922 touch answered."
                                  : "Freenove S3 3.5 -- ST77922 touch did not answer; no touch.");
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
+    uiClearSetBatterySource(boardBatteryState);
 #elif defined(FREENOVE_S3)
     // The Freenove S3 2.8"'s FT6336, on I2C SDA 16 / SCL 15 at 0x38, reset on
     // GPIO18 (active low). The ES8311 codec shares the bus at 0x18. FNK0104A
@@ -3991,6 +4062,7 @@ void setup() {
     Serial.println(usingCapTouch ? "Freenove S3 -- FT6336 capacitive touch answered."
                                  : "Freenove S3 -- FT6336 did not answer; no touch (FNK0104A?).");
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
+    uiClearSetBatterySource(boardBatteryState);
 #elif defined(TOUCH_ON_DISPLAY_BUS)
     // AWOK's XPT2046 sits on the display's own shared VSPI bus (TOUCH_CS=21,
     // already armed by TFT_eSPI itself once awok_user_setup.h's #define
@@ -4985,6 +5057,9 @@ void loop() {
             return true;
         }, nullptr);
     }
+#endif
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+    if (g_consoleBatt) { g_consoleBatt = false; boardBatteryPrintLog(); }
 #endif
     Clock::tick(now);   // the note to self, when it is due
 #if SQUACH_MESH && defined(BENCH_TOOLS)

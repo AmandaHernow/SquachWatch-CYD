@@ -565,6 +565,15 @@ int main(int argc, char** argv) {
     if (getenv("SQUACHSIM_LEGEND")) Squachy::previewLegend(true);
     // SQUACHSIM_DEJA=ms brings TH3 0N3's deja vu cat round that often.
     if (const char* dj = getenv("SQUACHSIM_DEJA")) Squachy::t3DejaEvery = (uint32_t)atoi(dj);
+    // SQUACHSIM_BATT=54 (or 54c, on the cable): a battery for the lava lamp,
+    // the way the CBDs and the watch report theirs. Unset: no battery, as on
+    // the CYDs, and the screen is unchanged.
+    if (getenv("SQUACHSIM_BATT")) uiClearSetBatterySource([](uint8_t& pct, bool& chg) {
+        const char* b = getenv("SQUACHSIM_BATT");
+        pct = (uint8_t)atoi(b);
+        chg = strchr(b, 'c') != nullptr;
+        return true;
+    });
     // SQUACHSIM_PRIVACY=1: PRIVACY MODE on, for shots of the masked screens.
     if (getenv("SQUACHSIM_PRIVACY") && !Settings::privacyMode()) Settings::togglePrivacyMode();
     // SQUACHSIM_CLASSIC=1: DETECTIONS set to CLASSIC (NEARBY and the full counter rows).
@@ -640,6 +649,11 @@ int main(int argc, char** argv) {
     // last frame.
     const uint32_t STEP_MS = 33;   // ~30fps, close to the device's real loop rate
     uint32_t now = millis();
+    // SQUACHSIM_T0 pins the first frame's time as well, so two renders of the
+    // same screen are byte-identical: with the wall clock here, a background
+    // or a blink lands a few milliseconds apart from run to run, and a
+    // comparison meant to prove a change left a board alone is all noise.
+    if (const char* t0 = getenv("SQUACHSIM_T0")) now = (uint32_t)strtoul(t0, nullptr, 10);
 
     // Virtual time, in the ONE-SHOT renderer too, not just the interactive
     // emulator.

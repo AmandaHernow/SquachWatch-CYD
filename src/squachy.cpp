@@ -3131,6 +3131,10 @@ static const char* const WINK_LINES[] = {
 void setVisiting(bool v) { s_visiting = v; }
 static bool s_company = false;
 void setCompany(bool on) { s_company = on; }
+static float s_sizeBoost = 1.0f;
+void setSizeBoost(float k) { s_sizeBoost = k > 0.0f ? k : 1.0f; }
+static float s_companyShare = 0.5f;
+void setCompanyShare(float share) { s_companyShare = share > 0.0f ? share : 0.5f; }
 bool visiting() { return s_visiting; }
 void setListening(bool v) { s_listening = v; }
 
@@ -8288,9 +8292,16 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
 
     float scale = (float)charAvail / (float)baseH;
     if (scale < minScale) scale = minScale;
+    const bool atCeiling = scale > scaleMax;
     if (scale > scaleMax) scale = scaleMax;   // 3.0 everywhere; narrower on a wide panel with company
 
     int headTopY = topY + bubbleRowH + headroom;
+    // Laid out from the top, his feet land on the floor only when he fills
+    // the band. Held at the ceiling he does not, and he stood in the air:
+    // LARGE on a 320x240 board in portrait, where the band is tall enough
+    // to want more than 3.0. Stand him on the floor instead. The big panels
+    // re-anchor below anyway, and off the ceiling nothing moves.
+    if (atCeiling) headTopY = topY + availHeight - (int)(scale * (float)baseH);
 
     // The SIZE row in Settings, applied last, and only when it is not 100.
     //
@@ -8317,6 +8328,21 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
     // and LARGE, laid out from the top, hung with his feet in the air.
     if (bigPanel) {
         float s2 = scale * (float)sizePct / 100.0f;
+        // The boost (setSizeBoost), past everything above, held only by the
+        // panel's width -- half of it with company -- and the band's height.
+        float boost = s_sizeBoost;
+#ifndef ARDUINO
+        // Emulator only: SQUACHSIM_SQK=k multiplies it, for rendering a size
+        // slider's every step before one of them ships.
+        if (const char* kk = getenv("SQUACHSIM_SQK")) { const float k = (float)atof(kk); if (k > 0.0f) boost *= k; }
+#endif
+        if (boost != 1.0f) {
+            s2 *= boost;
+            const float wCap = ((float)t.width() * (s_company ? s_companyShare : 1.0f) - 8.0f) / 56.0f;
+            const float hCap = (float)(availHeight - headroom) / (float)baseH;
+            if (s2 > wCap) s2 = wCap;
+            if (s2 > hCap) s2 = hCap;
+        }
         if (s2 < minScale) s2 = minScale;
         int tall = (int)(s2 * (float)baseH);
         if (tall < charAvailFloor) { tall = charAvailFloor; s2 = (float)tall / (float)baseH; }
@@ -8336,6 +8362,30 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
         if (bigPanel && s2 > scaleMax) { s2 = scaleMax; shrunk = (int)(s2 * (float)baseH); }
         scale    = s2;
         headTopY = topY + availHeight - shrunk;
+    }
+
+    // The boost on the smaller panels, from wherever the branches above left
+    // him: the same multiplier and the same two limits, feet on the floor.
+    // The main screen sets it on the 320x240 boards (ui_clear.cpp); at 1 it
+    // does nothing at all.
+    if (!bigPanel) {
+        float boost = s_sizeBoost;
+#ifndef ARDUINO
+        if (const char* kk = getenv("SQUACHSIM_SQK")) { const float k = (float)atof(kk); if (k > 0.0f) boost *= k; }
+#endif
+        if (boost != 1.0f) {
+            // The limits stop him growing; they never shrink him. The 2.8"
+            // in portrait already draws a visiting pair wider than half the
+            // panel each, and a limit below that took him DOWN as k went up.
+            float s2 = scale * boost;
+            const float wCap = ((float)t.width() * (s_company ? s_companyShare : 1.0f) - 8.0f) / 56.0f;
+            const float hCap = (float)(availHeight - headroom) / (float)baseH;
+            const float cap  = fmaxf(fminf(wCap, hCap), fminf(scale, s2));
+            if (s2 > cap) s2 = cap;
+            if (s2 < minScale) s2 = minScale;
+            scale    = s2;
+            headTopY = topY + availHeight - (int)(s2 * (float)baseH);
+        }
     }
 
     // A little wander away from center during Mood::WALK. bodyCx (not

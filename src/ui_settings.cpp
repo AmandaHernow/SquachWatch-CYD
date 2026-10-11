@@ -461,8 +461,9 @@ static void computeGeom(TFT_eSPI& t, int screenH, int& top, int& bodyBottom,
     const int big = t.fontHeight();
     t.setTextSize(Theme::uiTextSize(t, 1));
     headerH = t.fontHeight() + 6;
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);   // a two-line row's label line (drawTwoLineRow)
     tallH   = t.fontHeight() + big + 7;
+    Theme::bodyFontOff(t);
 }
 
 // Row height is decided in exactly one place, itemHeight() below, shared by
@@ -537,12 +538,14 @@ static void settingsConfirmRects(int screenW, int screenH,
                                  int& px, int& py, int& pw, int& ph,
                                  int& okX, int& okY, int& okW, int& okH,
                                  int& cnX, int& cnY, int& cnW, int& cnH) {
+    // A size up on the large panels, for the body font and taller buttons.
+    const bool big = Theme::large();
     pw = screenW - 40;
-    if (pw > 240) pw = 240;
-    ph = 128;
+    if (pw > (big ? 320 : 240)) pw = big ? 320 : 240;
+    ph = big ? 168 : 128;
     px = (screenW - pw) / 2;
     py = (screenH - ph) / 2;
-    const int margin = 10, gap = 8, btnH = 24;
+    const int margin = 10, gap = 8, btnH = big ? 32 : 24;
     cnH = okH = btnH;
     cnY = py + ph - btnH - margin;
     cnX = px + margin;
@@ -585,14 +588,15 @@ static void drawSettingsConfirm(TFT_eSPI& t, int w, int h) {
     Theme::drawBangersText(t, px + (pw - tw) / 2, py + 8, ct->title, Theme::RED, Theme::BangersSize::MD);
 
     t.setTextWrap(false);
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     t.setTextColor(Theme::WHITE, Theme::BG);
     const char* lines[2] = { ct->line1, ct->line2 };
     for (uint8_t i = 0; i < 2; i++) {
         int lw = t.textWidth(lines[i]);
-        t.setCursor(px + (pw - lw) / 2, py + 34 + i * 11);
+        t.setCursor(px + (pw - lw) / 2, py + 34 + i * (t.fontHeight() + 3));
         t.print(lines[i]);
     }
+    Theme::bodyFontOff(t);
 
     Theme::drawButton(t, okX, okY, okW, okH, ct->verb, false);
     Theme::drawButton(t, cnX, cnY, cnW, cnH, "CANCEL", false);
@@ -731,11 +735,12 @@ static void rowPanel(TFT_eSPI& t, int w, int y, int hgt) {
 static void drawTwoLineRow(TFT_eSPI& t, int w, int y, int hgt, const char* label,
                            const char* value, uint16_t labelColor, bool cycles) {
     rowPanel(t, w, y, hgt);
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     t.setTextColor(labelColor, Theme::BG);
     t.setCursor(8, y + 2);
     t.print(label);
     const int lineY = y + 2 + t.fontHeight() + 1;
+    Theme::bodyFontOff(t);
 
     t.setTextSize(2);
     const int chev = t.textWidth(">");
@@ -766,7 +771,11 @@ static void drawRow(TFT_eSPI& t, int w, int y, int hgt, const char* label,
     // backing below stays anyway: it costs nothing now and it is what keeps
     // text crisp if a row is ever drawn without a panel behind it.
     rowPanel(t, w, y, hgt);
-    t.setTextSize(compact ? 1 : Theme::uiMenuTextSize(t));
+    // A compact row on a large panel (the 3.5" in portrait) takes the body
+    // font: about as wide a letter as size 1, so every row still fits, and
+    // half again as tall.
+    if (compact) Theme::bodyFontOn(t);
+    else         t.setTextSize(Theme::uiMenuTextSize(t));
     t.setTextColor(danger ? Theme::RED : labelColor, Theme::BG);
     t.setCursor(8, y + (hgt - t.fontHeight()) / 2);
     t.print(label);
@@ -779,6 +788,7 @@ static void drawRow(TFT_eSPI& t, int w, int y, int hgt, const char* label,
         t.setCursor(w - 18 - vw, y + (hgt - t.fontHeight()) / 2);
         t.print(value);
     }
+    if (compact) Theme::bodyFontOff(t);
 }
 
 // Fills in what a row actually shows. valBuf is scratch space for

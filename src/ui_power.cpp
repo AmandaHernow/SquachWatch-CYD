@@ -15,7 +15,7 @@ static PowerRow rowAt(uint8_t i) { return (PowerRow)i; }
 // needs a live TFT_eSPI& since it depends on real font metrics, and is
 // shared by drawing and hit-testing so the two cannot drift apart.
 static void computeGeom(TFT_eSPI& t, int screenH, int& top, int& bodyBottom, int& rowH) {
-    top = TOP_MARGIN + Theme::LIST_HEADING_H;
+    top = TOP_MARGIN + Theme::listHeadingH();
     bodyBottom = screenH - Theme::pinnedBackH(t.width()) - 2;
     t.setTextSize(Theme::uiMenuTextSize(t));
     // Two pixels taller than the text strictly needs on each side: a 24 px
