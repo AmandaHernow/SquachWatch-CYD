@@ -305,8 +305,9 @@ namespace Theme {
     // A keyboard key in the payphone's steel: the message board and the
     // WiFi password board share it. `lit` is the key under the finger.
     void drawSteelKey(TFT_eSPI& t, int x, int y, int w, int h, bool lit);
+    // bold: the label struck twice, a pixel apart (the alert's IGNORE).
     void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
-                         const char* label, bool sunken);
+                         const char* label, bool sunken, bool bold = false);
 
     // A Win95 dialog window, as System Properties draws one: the raised
     // frame, a navy title bar carrying `title` in font 2 with a close box at

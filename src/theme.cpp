@@ -506,7 +506,7 @@ void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
 }
 
 void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
-                     const char* label, bool sunken) {
+                     const char* label, bool sunken, bool bold) {
     // Face first, inset by the two bevel rings so the edges below draw over
     // nothing they need to keep.
     t.fillRect(x + 2, y + 2, w - 4, h - 4, W95_FACE);
@@ -549,12 +549,17 @@ void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
         t.setTextFont(2);
         if (t.textWidth(label) > w - 8) t.setTextFont(1);
     }
-    const int tw = t.textWidth(label);
+    const int tw = t.textWidth(label) + (bold ? 1 : 0);
     const int th = t.fontHeight();
     const int ox = sunken ? 1 : 0;
-    t.setCursor(x + 2 + (w - 4 - tw) / 2 + ox,
-                y + 2 + (h - 4 - th) / 2 + ox);
+    const int lx = x + 2 + (w - 4 - tw) / 2 + ox, ly = y + 2 + (h - 4 - th) / 2 + ox;
+    // Bold is the same label twice, a pixel apart. Drawn with no background
+    // (the face is already filled) so the second pass does not wipe the
+    // first one's left edge.
+    if (bold) t.setTextColor(BLACK);
+    t.setCursor(lx, ly);
     t.print(label);
+    if (bold) { t.setCursor(lx + 1, ly); t.print(label); }
     if (swapped) t.setTextFont(callerFont);   // only ever touched here
 }
 

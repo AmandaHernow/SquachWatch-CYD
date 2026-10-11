@@ -208,6 +208,27 @@ __attribute__((noinline)) static void jailTick(TFT_eSPI& t, uint32_t now, int sc
     if (r < 6) r = 6;
     int ballX = cx + halfW * 76 / 65;
     if (ballX > screenW - r - 4) ballX = screenW - r - 4;
+    // No teleporting (see PetHop in pet.cpp). The ball follows his walk
+    // exactly, but when its spot leaps -- he was carried or thrown and put
+    // down somewhere else -- it rolls there, heavily, instead of appearing.
+    {
+        static int      s_jShown = -1000;
+        static uint32_t s_jRollAt = 0;
+        static bool     s_jRolling = false;
+        const uint32_t dt = s_jRollAt ? now - s_jRollAt : 0;
+        s_jRollAt = now;
+        const int far = halfW * 2 / 3 > 12 ? halfW * 2 / 3 : 12;
+        if (s_jX <= -100 || s_jShown == -1000 || dt > 500) { s_jShown = ballX; s_jRolling = false; }
+        else {
+            if (abs(ballX - s_jShown) > far) s_jRolling = true;
+            if (s_jRolling) {
+                const int step = (int)(dt * 0.3f) > 1 ? (int)(dt * 0.3f) : 1;
+                if (abs(ballX - s_jShown) <= step) { s_jShown = ballX; s_jRolling = false; }
+                else s_jShown += ballX > s_jShown ? step : -step;
+            } else s_jShown = ballX;
+        }
+        ballX = s_jShown;
+    }
     const int floorY = bot + 1;
 
     // Walked out: the ball says its piece, then goes up in smoke.

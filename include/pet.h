@@ -43,6 +43,14 @@ namespace Pet {
     bool clippyHit(int x, int y);
     void clippyPoke(uint32_t now);
     bool clippyCenter(int& x, int& y);
+    // The pet as drawn this frame (C1iPPY, T0@$TY or the ball), top left, in
+    // the pet's own coordinates; false when none is on screen. For the
+    // emulator's motion checks.
+    bool drawnAt(int& x, int& y);
+    // The balloons a pet asked for while drawing into the 3.5in's doubled
+    // layer, drawn now at the screen's own size. Call after the layer is
+    // laid down; does nothing when none is waiting.
+    void drawHeldBalloons(TFT_eSPI& t);
     // Picking him up. A touch that lands on him grabs him at once; every
     // frame it is held drags him; letting go is a poke when the finger never
     // went anywhere, a throw when it was still moving, and a drop otherwise.

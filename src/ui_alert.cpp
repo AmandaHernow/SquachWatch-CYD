@@ -638,8 +638,10 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
         // one. Win95 had a word for a button that stays in after you let go
         // and this is it, so the state costs no new colour, no legend and
         // nothing to learn: the thing is pushed in, and pushed in means done.
+        // In bold (asked for 2026-10-10): it is the one button here that
+        // changes what the device does from now on.
         Theme::drawWin95Button(t, bx, by, bw, bh,
-                               already ? "MUTED" : "IGNORE", already);
+                               already ? "MUTED" : "IGNORE", already, true);
     }
 
     {

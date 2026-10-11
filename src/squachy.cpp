@@ -1969,6 +1969,15 @@ void startShowOff() {
     s_showWB    = -1;
 }
 
+void wanderNow(int8_t dir) {
+    const uint32_t now = millis();
+    mood = Mood::WALK;
+    moodUntil = now + WALK_DURATION_MS;
+    s_walkStart = now;
+    s_walkDir = dir < 0 ? -1 : 1;
+    s_walkYanked = false;
+}
+
 void stopShowOff() {
     if (!s_showOff) return;
     s_showOff   = false;

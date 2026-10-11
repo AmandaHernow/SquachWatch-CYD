@@ -325,6 +325,52 @@ static const char* clipCatchLine(uint8_t type) {
     }
 }
 
+// ---- no teleporting ------------------------------------------------------
+// C1iPPY and T0@$TY stand on a spot worked out from Squachy every frame. Most
+// frames that spot moves only as far as Squachy walked, and they go with him.
+// But it can also JUMP: the right-hand side runs out of room near the edge
+// and both spots swap to his left, the second spot folds onto the first, he
+// lands somewhere else after a throw, or he changes size for a crowd. Drawn
+// straight there, the pet vanished and reappeared a body-width away
+// (reported 2026-10-10). So a jump starts a hop instead: from wherever the
+// pet is drawn, at whatever height, to the new spot -- longer and higher the
+// further it is, so crossing Squachy arcs over his feet rather than through
+// them -- and a jump mid-hop simply starts a new one from mid-air.
+struct PetHop {
+    uint32_t at = 0, ms = 0;             // running while now - at < ms
+    int16_t  fromX = 0;
+    float    fromLift = 0, height = 0;   // lift: pixels off the ground, negative is up
+    float    lift = 0;                   // as drawn last frame
+    int16_t  lastRel = 0, lastCx = 0;    // the spot relative to him, and him, last frame
+    bool     seen = false;
+};
+static bool petHopping(const PetHop& h, uint32_t now) { return h.at && now - h.at < h.ms; }
+static void petHopStart(PetHop& h, int fromX, float fromLift, int to, uint32_t now, uint32_t baseMs, float baseH) {
+    const int d = abs(to - fromX);
+    const int extra = d > 30 ? d - 30 : 0;      // the usual hop between spots is 30 wide
+    h.at = now ? now : 1;
+    h.fromX = (int16_t)fromX;
+    h.fromLift = fromLift;
+    h.lift = fromLift;
+    h.ms = baseMs + (uint32_t)(extra * 3 > 600 ? 600 : extra * 3);
+    h.height = baseH + (extra * 0.3f > 50.0f ? 50.0f : extra * 0.3f);
+}
+// Once a frame, before drawing: did the spot move further than Squachy
+// walking could have carried it? His own walk is followed exactly; a change
+// in where the spot sits RELATIVE to him, or a leap of his anchor bigger than
+// any walking step, is a jump.
+static void petHopGuard(PetHop& h, int to, int cx, int halfW, int shownX, uint32_t now, uint32_t baseMs, float baseH) {
+    const int rel = to - cx;
+    if (h.seen && shownX > -100) {
+        const int far = halfW * 2 / 3 > 12 ? halfW * 2 / 3 : 12;
+        if (abs(rel - h.lastRel) > 3 || abs(cx - h.lastCx) > far)
+            petHopStart(h, shownX, petHopping(h, now) ? h.lift : 0.0f, to, now, baseMs, baseH);
+    }
+    h.seen = true;
+    h.lastRel = (int16_t)rel;
+    h.lastCx = (int16_t)cx;
+}
+
 enum class ClipFace : uint8_t { IDLE, TALK, SURPRISED, SMUG };
 static const int      CLIP_W = 32, CLIP_H = 46;
 static const uint32_t CLIP_TALK_MS  = 5500;
@@ -332,13 +378,13 @@ static const uint32_t CLIP_HOP_MS   = 700, CLIP_LAND_MS = 160;
 static const uint32_t CLIP_SMUG_MS  = 3000;
 
 static const char* s_cLine   = nullptr;     // in his balloon until s_cSaidAt + CLIP_TALK_MS
-static uint32_t    s_cSaidAt = 0, s_cNextTip = 0, s_cHopAt = 0, s_cNextHop = 0;
+static uint32_t    s_cSaidAt = 0, s_cNextTip = 0, s_cNextHop = 0;
 static uint32_t    s_cSmugAt = 0, s_cPokeAt = 0;
 static bool        s_cCaught = false, s_cAnswered = true, s_cSpotB = false;
 static uint8_t     s_cTip = 0, s_cPoke = 0;
 static int16_t     s_cX = -100, s_cY = 0;   // the box's top-left this frame, for hits
 static uint8_t     s_cPending = 0;          // a catch to talk about, type + 1
-static int16_t     s_cFromX = 0;
+static PetHop      s_cHop;
 
 // Picked up and thrown. HELD follows the finger; AIR is gravity and bounces;
 // SIT is a moment on the floor before he hops home. While any of it runs he
@@ -478,7 +524,7 @@ void clippyGrab(int x, int y, uint32_t now) {
     s_cTh = ClipThrow::HELD;
     s_cfX = (float)s_cX; s_cfY = (float)s_cY;
     gripStart(s_cG, x, y, s_cX, s_cY, now);
-    s_cHopAt = 0;
+    s_cHop.at = 0;
 }
 
 void clippyDrag(int x, int y, uint32_t now) {
@@ -624,7 +670,17 @@ static void clipDraw(TFT_eSPI& t, int x, int y, uint32_t now, ClipFace face) {
 // Above him, wrapped at 24 characters in three lines -- or, on a screen too
 // short for that (the StickS3), BESIDE him at whatever width the side has,
 // in up to five lines, so it never sits on Squachy's face.
+// On the 3.5in the pets are drawn into a half-size layer and doubled (see
+// drawPets() in ui_clear.cpp), which doubled their balloons and the text in
+// them too: huge. A balloon asked for there is kept instead, in screen
+// pixels, and drawn after the layer at the screen's own size -- a smaller
+// box and smaller text (asked for 2026-10-10). One pet talks at a time, so
+// one of each kind is all that is ever waiting.
+struct HeldBalloon { const char* s; int x, y, w, sw, sh; bool on; };
+static HeldBalloon s_heldPet = {}, s_heldBubble = {};
+
 static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW, int screenW, int screenH) {
+    if (s_k > 1) { s_heldPet = { s, boxX * s_k, boxY * s_k, boxW * s_k, screenW * s_k, screenH * s_k, true }; return; }
     const bool side = screenH < 200;
     int maxC = 24;
     bool right = true;
@@ -651,7 +707,10 @@ static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW,
     t.setTextSize(1);
     int tw = 0;
     for (uint8_t i = 0; i < n; i++) { const int w = t.textWidth(lines[i]); if (w > tw) tw = w; }
-    const int bw = tw + 9, bh = n * 9 + 6;
+    // A row per line: 9 in the system font, the font's own height in the
+    // 3.5in's medium one (see drawHeldBalloons()).
+    const int lh = t.fontHeight() > 8 ? t.fontHeight() - 1 : 9;
+    const int bw = tw + 9, bh = n * lh + 6;
     const uint16_t paper = (uint16_t)0xFFDA;
     if (side && maxC < 24 + 1 && (screenW - (boxX + boxW + 4) - 4 >= bw || boxX - 6 >= bw)) {
         int bx = right ? boxX + boxW + 4 : boxX - 4 - bw;
@@ -667,7 +726,7 @@ static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW,
             t.drawPixel(tx, ty + i - 1, Theme::BLACK);
         }
         t.setTextColor(Theme::BLACK, paper);
-        for (uint8_t i = 0; i < n; i++) { t.setCursor(bx + 5, by + 3 + i * 9); t.print(lines[i]); }
+        for (uint8_t i = 0; i < n; i++) { t.setCursor(bx + 5, by + 3 + i * lh); t.print(lines[i]); }
         return;
     }
     const int anchorX = boxX + boxW / 2, bottomY = boxY - 4;
@@ -687,7 +746,7 @@ static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW,
         t.drawPixel(tx + 2, by + bh - 1 + i, Theme::BLACK);
     }
     t.setTextColor(Theme::BLACK, paper);
-    for (uint8_t i = 0; i < n; i++) { t.setCursor(bx + 5, by + 3 + i * 9); t.print(lines[i]); }
+    for (uint8_t i = 0; i < n; i++) { t.setCursor(bx + 5, by + 3 + i * lh); t.print(lines[i]); }
 }
 
 static void clipBalloon(TFT_eSPI& t, const char* s, int clipX, int clipY, int screenW, int screenH) {
@@ -751,9 +810,9 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     }
     // A hop to the other spot, not while he is mid-sentence.
     if (!talking && (int32_t)(now - s_cNextHop) >= 0 && a != b) {
-        s_cFromX = s_cSpotB ? (int16_t)b : (int16_t)a;
+        const int from = s_cSpotB ? b : a;
         s_cSpotB = !s_cSpotB;
-        s_cHopAt = now;
+        petHopStart(s_cHop, from, 0.0f, s_cSpotB ? b : a, now, CLIP_HOP_MS, 24.0f);
         s_cNextHop = now + 30000 + (uint32_t)random(0, 20000);
     }
     const int to = s_cSpotB ? b : a;
@@ -819,8 +878,7 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
             if (now - s_cThAt > 900) {
                 // Home, by the usual hop.
                 s_cTh = ClipThrow::NONE;
-                s_cFromX = (int16_t)lroundf(s_cfX);
-                s_cHopAt = now;
+                petHopStart(s_cHop, (int)lroundf(s_cfX), 0.0f, to, now, CLIP_HOP_MS, 24.0f);
             }
         }
         if (s_cTh != ClipThrow::NONE) {
@@ -836,25 +894,28 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
             return;
         }
     }
+    petHopGuard(s_cHop, to, cx, halfW, s_cX, now, CLIP_HOP_MS, 24.0f);
     float x = (float)to, hop = 0.0f;
     s_cSq = 1.0f;
     ClipFace face = ClipFace::IDLE;
-    const uint32_t since = now - s_cHopAt;
-    if (s_cHopAt && since < CLIP_HOP_MS) {
-        const float k = (float)since / (float)CLIP_HOP_MS;
-        x = (float)s_cFromX + (float)(to - s_cFromX) * k;
-        hop = -sinf(k * 3.14159265f) * 24.0f;
+    const uint32_t since = now - s_cHop.at;
+    const bool inHop = petHopping(s_cHop, now);
+    if (inHop) {
+        const float k = (float)since / (float)s_cHop.ms;
+        x = (float)s_cHop.fromX + (float)(to - s_cHop.fromX) * k;
+        hop = s_cHop.fromLift * (1.0f - k) - sinf(k * 3.14159265f) * s_cHop.height;
         s_cSq = 1.0f + 0.08f * sinf(k * 3.14159265f);
         face = ClipFace::SURPRISED;
     } else {
-        if (s_cHopAt && since < CLIP_HOP_MS + CLIP_LAND_MS) s_cSq = 0.82f + 0.18f * (float)(since - CLIP_HOP_MS) / (float)CLIP_LAND_MS;
+        if (s_cHop.at && since < s_cHop.ms + CLIP_LAND_MS) s_cSq = 0.82f + 0.18f * (float)(since - s_cHop.ms) / (float)CLIP_LAND_MS;
         if (talking) face = (s_cCaught && now - s_cSaidAt < 900) ? ClipFace::SURPRISED : ClipFace::TALK;
         else if (s_cSmugAt && now - s_cSmugAt < CLIP_SMUG_MS) face = ClipFace::SMUG;
     }
+    s_cHop.lift = hop;
     s_cX = (int16_t)lroundf(x);
     s_cY = (int16_t)(bot - 44 + (int)lroundf(hop));
     clipDraw(t, s_cX, s_cY, now, face);
-    if (talking && !(s_cHopAt && since < CLIP_HOP_MS)) {
+    if (talking && !inHop) {
         clipBalloon(t, s_cLine, s_cX, s_cY, screenW, t.height());
         s_cShownMs += seenMs;
     }
@@ -862,6 +923,30 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
 
 #include "pet_toaster.inc"
 #include "pet_jail.inc"
+
+static void bubble(TFT_eSPI& t, int x, int y, int screenW, const char* s);   // below
+
+void drawHeldBalloons(TFT_eSPI& t) {
+    const int k = s_k;
+    s_k = 1;
+    // The medium font the 3.5in's other screens use for body text: the tiny
+    // system font was too small there and the doubled one too big
+    // (2026-10-10).
+    const uint8_t callerFont = t.textfont;
+    if (Theme::large()) t.setTextFont(2);
+    if (s_heldPet.on) petBalloon(t, s_heldPet.s, s_heldPet.x, s_heldPet.y, s_heldPet.w, s_heldPet.sw, s_heldPet.sh);
+    if (s_heldBubble.on) bubble(t, s_heldBubble.x, s_heldBubble.y, s_heldBubble.sw, s_heldBubble.s);
+    s_heldPet.on = s_heldBubble.on = false;
+    t.setTextFont(callerFont);
+    s_k = k;
+}
+
+bool drawnAt(int& x, int& y) {
+    if (s_cX > -100) { x = s_cX; y = s_cY; return true; }
+    if (s_tX > -100) { x = s_tX; y = s_tY; return true; }
+    if (s_jX > -100) { x = s_jX; y = s_jY; return true; }
+    return false;
+}
 
 void reset() {
     toasterReset();
@@ -877,7 +962,7 @@ void reset() {
     s_yFlinchAt = 0;
     s_yLine  = nullptr;
     s_cX     = -100;
-    s_cHopAt = 0;
+    s_cHop   = PetHop();
     s_cTh    = ClipThrow::NONE;
 }
 
@@ -885,6 +970,7 @@ void reset() {
 // size 1 with a hard edge and no tail curve -- it should read as an
 // interruption, not as the device speaking.
 static void bubble(TFT_eSPI& t, int x, int y, int screenW, const char* s) {
+    if (s_k > 1) { s_heldBubble = { s, x * s_k, y * s_k, 0, screenW * s_k, 0, true }; return; }
     t.setTextSize(1);
     const int w = t.textWidth(s) + 8;
     const int h = t.fontHeight() + 5;
@@ -923,10 +1009,11 @@ static void yetiTick(TFT_eSPI& t, uint32_t now, int screenW, int cx, int halfW, 
     }
     case YPhase::IN: {
         const float target = (float)(cx - halfW - Theme::YETI_W / 2 - 8);
-        s_yX += YETI_PXMS * (float)(now - s_yAt);
+        const float stepPx = YETI_PXMS * (float)(now - s_yAt);
+        s_yX += stepPx;
         s_yAt = now;
         if (s_yX >= target) {
-            s_yX = target;
+            if (s_yX - target <= stepPx + 1.0f) s_yX = target;   // as the lil guy: no leap back
             s_yPhase = s_yNap ? YPhase::NAP : YPhase::TALK;
             s_yAt = now;
             if (s_yNap) s_yLine = "YETI NAP.";
@@ -1023,7 +1110,12 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
     if (which == Squachy::PetId::YETI) {
         int ycx, yhalfW, ytop, ybot;
         if (!zFootprint(ycx, yhalfW, ytop, ybot)) return;
-        if (Squachy::isHeld()) { s_yPhase = YPhase::AWAY; return; }
+        // Squachy picked up mid-visit: the yeti leaves on foot instead of
+        // vanishing, and no new visit starts while he is in the air.
+        if (Squachy::isHeld()) {
+            if (s_yPhase == YPhase::IN || s_yPhase == YPhase::TALK || s_yPhase == YPhase::NAP) { s_yPhase = YPhase::OUT; s_yAt = now; }
+            if (s_yPhase == YPhase::AWAY) return;
+        }
         (void)ytop; (void)ybot;
         yetiTick(t, now, screenW, ycx, yhalfW, bandBottom);
         return;
@@ -1040,7 +1132,21 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
     // Not while he is being carried or is dangling from something. A pet
     // perching on a head that is itself flying through the air reads as a
     // bug rather than as a joke.
-    if (Squachy::isHeld()) { if (s_phase != Phase::AWAY) reset(); return; }
+    // Picked up mid-visit: the lil guy leaves rather than vanishing. On the
+    // ground he runs off; on (or over) Squachy's head he drops straight down
+    // first, under the same gravity as any other landing. Nothing new starts
+    // while Squachy is in the air.
+    if (Squachy::isHeld()) {
+        if (s_phase == Phase::AWAY) return;
+        if (s_phase == Phase::RUN_IN || s_phase == Phase::HECKLE) { s_phase = Phase::RUN_OUT; s_at = now; }
+        else if (s_phase == Phase::UP || s_phase == Phase::PERCH) {
+            const float groundY = (float)(bot - SPR);
+            s_dropX = s_x; s_dropY = s_y; s_landX = s_x; s_groundY = groundY;
+            const float dh = groundY - s_dropY;
+            s_tHalf = (dh > 1.0f) ? sqrtf(2.0f * dh / G) : 1.0f;
+            s_phase = Phase::DOWN; s_at = now;
+        }
+    }
 
     // lastFootprint() gives the floor and the width, but NOT the head: its
     // `top` is a generous, un-bobbed hit box sitting twenty scaled units
@@ -1101,11 +1207,15 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
         // whichever side he came from.
         const float target = s_fromLeft ? (float)(cx - halfW - SPR)
                                         : (float)(cx + halfW);
-        s_x += (s_fromLeft ? RUN_PXMS : -RUN_PXMS) * (float)(now - s_at);
+        const float stepPx = RUN_PXMS * (float)(now - s_at);
+        s_x += s_fromLeft ? stepPx : -stepPx;
         s_at = now;
         s_y  = ground;
         if ((s_fromLeft && s_x >= target) || (!s_fromLeft && s_x <= target)) {
-            s_x = target;
+            // Settle onto the mark only if it is within this frame's stride.
+            // If Squachy jumped back past him (a crowd, a size change) he
+            // stops where he is rather than leaping backwards to it.
+            if (fabsf(s_x - target) <= stepPx + 1.0f) s_x = target;
             // Most visits stop here and talk from the floor.
             if (!s_willPerch) { s_phase = Phase::HECKLE; s_at = now; break; }
             // Lock the flight in now. Apex height and half-time come out of

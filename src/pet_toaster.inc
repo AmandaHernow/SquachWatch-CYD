@@ -154,10 +154,11 @@ static const float    TOAST_G = 0.0028f;
 
 static const char* s_tLine    = nullptr;
 static uint32_t    s_tSaidAt  = 0, s_tShownMs = 0, s_tLastNow = 0;
-static uint32_t    s_tNextTip = 0, s_tHopAt = 0, s_tNextHop = 0, s_tPokeAt = 0, s_tScaredAt = 0;
+static uint32_t    s_tNextTip = 0, s_tNextHop = 0, s_tPokeAt = 0, s_tScaredAt = 0;
+static PetHop      s_tHop;          // see PetHop in pet.cpp: no teleporting
 static bool        s_tCaught = false, s_tAnswered = true, s_tSpotB = false;
 static uint8_t     s_tTip = 0, s_tPoke = 0, s_tPending = 0, s_tDial = 2;
-static int16_t     s_tX = -100, s_tY = 0, s_tFromX = 0;
+static int16_t     s_tX = -100, s_tY = 0;
 // The catch in progress: when it began and what it was.
 static uint32_t    s_tCatchAt = 0;
 static uint8_t     s_tCatchType = 0;
@@ -341,7 +342,7 @@ static void toasterGrab(int x, int y, uint32_t now) {
     s_tPh = TPhase::HELD;
     s_tfX = (float)s_tX; s_tfY = (float)s_tY;
     gripStart(s_tG, x, y, s_tX, s_tY, now);
-    s_tHopAt = 0;
+    s_tHop.at = 0;
     s_tCatchAt = 0;
 }
 static void toasterDrag(int x, int y, uint32_t now) {
@@ -417,7 +418,7 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     }
     if (!s_tNextTip) s_tNextTip = now + 8000;
     if (!s_tNextHop) s_tNextHop = now + 30000 + (uint32_t)random(0, 20000);
-    const bool hopping = s_tHopAt && now - s_tHopAt < TOAST_HOP_MS;
+    const bool hopping = petHopping(s_tHop, now);
     const bool busy = s_tPh != TPhase::NONE || hopping || (s_tCatchAt && now - s_tCatchAt < 3400);
     // A catch: the lever goes down, he braces, and the slice pops.
     if (s_tPending && !busy) {
@@ -440,9 +441,9 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
         if (random(0, 2) == 0) Squachy::visitSay(TOAST_BACK[random(0, 4)]);
     }
     if (!talking && !busy && (int32_t)(now - s_tNextHop) >= 0 && a != b) {
-        s_tFromX = s_tSpotB ? (int16_t)b : (int16_t)a;
+        const int from = s_tSpotB ? b : a;
         s_tSpotB = !s_tSpotB;
-        s_tHopAt = now;
+        petHopStart(s_tHop, from, 0.0f, s_tSpotB ? b : a, now, TOAST_HOP_MS, 16.0f);
         s_tNextHop = now + 30000 + (uint32_t)random(0, 20000);
     }
     const int to = s_tSpotB ? b : a;
@@ -558,8 +559,7 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
             tf = TFace::DIZZY;
             if (now - s_tThAt > TOAST_SIT_MS) {
                 s_tPh = TPhase::NONE;
-                s_tFromX = (int16_t)lroundf(s_tfX);
-                s_tHopAt = now;
+                petHopStart(s_tHop, (int)lroundf(s_tfX), 0.0f, to, now, TOAST_HOP_MS, 16.0f);
             }
         }
         if (s_tPh != TPhase::NONE) {
@@ -581,18 +581,20 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     }
 
     // ---- on his spot ----
+    petHopGuard(s_tHop, to, cx, halfW, s_tX, now, TOAST_HOP_MS, 16.0f);
     float x = (float)to, hop = 0.0f, lever = 0.0f;
     s_tSq = 1.0f;
     TFace face = TFace::IDLE;
-    const uint32_t since = now - s_tHopAt;
-    if (s_tHopAt && since < TOAST_HOP_MS) {
-        const float k = (float)since / (float)TOAST_HOP_MS;
-        x = (float)s_tFromX + (float)(to - s_tFromX) * k;
-        hop = -sinf(k * 3.14159265f) * 16.0f;
+    const uint32_t since = now - s_tHop.at;
+    const bool inHop = petHopping(s_tHop, now);
+    if (inHop) {
+        const float k = (float)since / (float)s_tHop.ms;
+        x = (float)s_tHop.fromX + (float)(to - s_tHop.fromX) * k;
+        hop = s_tHop.fromLift * (1.0f - k) - sinf(k * 3.14159265f) * s_tHop.height;
         s_tSq = 1.0f + 0.06f * sinf(k * 3.14159265f);
         face = TFace::POP;
     } else {
-        if (s_tHopAt && since < TOAST_HOP_MS + TOAST_LAND_MS) s_tSq = 0.84f + 0.16f * (float)(since - TOAST_HOP_MS) / (float)TOAST_LAND_MS;
+        if (s_tHop.at && since < s_tHop.ms + TOAST_LAND_MS) s_tSq = 0.84f + 0.16f * (float)(since - s_tHop.ms) / (float)TOAST_LAND_MS;
         if (talking) face = TFace::TALK;
     }
     if (s_tCatchAt) {
@@ -618,12 +620,13 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     int shake = 0;
     if (s_tScaredAt && now - s_tScaredAt < 2500) { face = TFace::SCARED; shake = (int)((now / 60) & 1); }
     else s_tScaredAt = 0;
+    s_tHop.lift = hop;
     s_tX = (int16_t)lroundf(x);
     s_tY = (int16_t)(bot - TOAST_H + (int)lroundf(hop));
     drawSlice();
     toastDraw(t, s_tX + shake, s_tY, now, face, s_tSq, lever, false, hop < -0.5f);
     drawDebris();
-    if (talking && !(s_tHopAt && since < TOAST_HOP_MS)) {
+    if (talking && !inHop) {
         petBalloon(t, s_tLine, s_tX, s_tY, TOAST_W, screenW, screenH);
         s_tShownMs += seenMs;
     }
@@ -631,7 +634,7 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
 
 static void toasterReset() {
     s_tX = -100;
-    s_tHopAt = 0;
+    s_tHop = PetHop();
     s_tPh = TPhase::NONE;
     s_tsLive = false;
     s_tlLive = false;

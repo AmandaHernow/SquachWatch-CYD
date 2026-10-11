@@ -121,6 +121,9 @@ namespace Squachy {
     // about, so without this there is no way to see the set. Any tap
     // ends it; it also ends on its own after the last pose.
     void startShowOff();
+    // His wander, now, towards dir (+1 right, -1 left): edge to edge and back,
+    // as the idle roll starts it. For the emulator's motion checks.
+    void wanderNow(int8_t dir);
     // A percentage on every duration of his. See setTempo() in squachy.cpp.
     void setTempo(uint8_t pct);
     void stopShowOff();

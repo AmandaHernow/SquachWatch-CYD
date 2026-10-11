@@ -1752,6 +1752,18 @@ static uint16_t lampRainbow(uint16_t deg) {
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
+// Where the lamp goes: s is the size of one art pixel, (ox, oy) its top left.
+// Small screens: under the menu icon, centred in the space left of the
+// counters. The 3.5in draws it triple size (asked for 2026-10-10), under the
+// menu icon in both orientations. Portrait's two-line speech bubble overlaps
+// the side of the glass, and that is wanted: the bubble is drawn later and
+// sits on top, like any other bubble over the background.
+static void lampPlace(TFT_eSPI& t, int& s, int& ox, int& oy) {
+    oy = Theme::TITLE_ICON_BAND_H + 3;
+    if (!Theme::large()) { s = 1; ox = 17; return; }
+    s = 3; ox = 3;
+}
+
 static void drawLavaLamp(TFT_eSPI& t, uint32_t now, uint8_t L, bool chg) {
     // Art x -1..11 and y -1..19: the lamp plus a ring for its outline.
     static const int GW = 13, GH = 21;
@@ -1849,11 +1861,8 @@ static void drawLavaLamp(TFT_eSPI& t, uint32_t now, uint8_t L, bool chg) {
         col[gy][gx] = (y >= 3 && y <= 14 && 14 - y < n) ? glow : TFT_BLACK;
     }
 
-    // Under the menu icon: centred in the free space beside the counters on
-    // the small screens, tucked left of the speech bubble on the 3.5in.
-    const int s  = Theme::large() ? 2 : 1;
-    const int ox = s == 2 ? (t.width() > t.height() ? 6 : 4) : 17;
-    const int oy = Theme::TITLE_ICON_BAND_H + 3;
+    int s, ox, oy;
+    lampPlace(t, s, ox, oy);
     for (int gy = 0; gy < GH; gy++) {
         int gx = 0;
         while (gx < GW) {
@@ -1880,9 +1889,9 @@ static void drawBatteryGauge(TFT_eSPI& t, uint32_t now) {
         if (pct > 100) pct = 100;
     }
     if (!has) return;
-    const int s = Theme::large() ? 2 : 1;
-    const int top = Theme::TITLE_ICON_BAND_H + 3 - s;
-    if (DrawBand::has(top, top + 21 * s)) drawLavaLamp(t, now, pct, chg);
+    int s, ox, oy;
+    lampPlace(t, s, ox, oy);
+    if (DrawBand::has(oy - s, oy + 20 * s)) drawLavaLamp(t, now, pct, chg);
 }
 
 #if defined(TWATCH_S3)
@@ -2732,6 +2741,7 @@ static void drawPets(TFT_eSPI& t, uint32_t now, int w, int h, int bandTop, int p
                 x = e;
             }
         }
+        Pet::drawHeldBalloons(t);
         return;
     }
 #endif
@@ -2746,6 +2756,7 @@ static void drawPets(TFT_eSPI& t, uint32_t now, int w, int h, int bandTop, int p
             x = e;
         }
     }
+    Pet::drawHeldBalloons(t);
 }
 
 void uiClearInit(TFT_eSPI& t) {

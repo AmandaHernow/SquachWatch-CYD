@@ -1213,12 +1213,22 @@ int main(int argc, char** argv) {
         const uint32_t sNow = now + (uint32_t)(frames + s) * STEP_MS;
         grabStep();
         throwStep(s, sNow);
+        // SQUACHSIM_WANDER=1 or -1: his edge-to-edge wander, starting with the capture.
+        if (s == 0 && getenv("SQUACHSIM_WANDER")) { SimClock::nowMs = sNow; Squachy::wanderNow((int8_t)atoi(getenv("SQUACHSIM_WANDER"))); }
         tick(sNow);
         // --tap frame numbers run straight on through the capture, so a tap
         // can land on a frame you can actually look at afterwards.
         for (int k = 0; k < tapN; k++)
             if (taps[k].f == frames + s) tapAt(taps[k].x, taps[k].y, sNow);
         xyzzyStep();
+        // SQUACHSIM_PETLOG=1: the pet's drawn position every captured frame,
+        // and Squachy's, for checking that nothing teleports.
+        if (getenv("SQUACHSIM_PETLOG")) {
+            int px = -999, py = -999, cx = -999, hw = 0, tp = 0, bt = 0;
+            Pet::drawnAt(px, py);
+            Squachy::lastFootprint(cx, hw, tp, bt);
+            printf("petlog %d %d %d %d\n", s, px, py, cx);
+        }
         frame.pushSprite(0, 0);
         std::vector<uint8_t> rgb = toRgb888(tft.pixelsRGB565());
 
