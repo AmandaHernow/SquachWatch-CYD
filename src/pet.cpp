@@ -677,7 +677,21 @@ static void clipDraw(TFT_eSPI& t, int x, int y, uint32_t now, ClipFace face) {
 // box and smaller text (asked for 2026-10-10). One pet talks at a time, so
 // one of each kind is all that is ever waiting.
 struct HeldBalloon { const char* s; int x, y, w, sw, sh; bool on; };
+// Bold for the 3.5in's held balloons: each line printed twice, a pixel
+// apart, so the medium font reads heavier at the same size.
+static bool s_balloonBold = false;
 static HeldBalloon s_heldPet = {}, s_heldBubble = {};
+
+// The balloon's lines, black on its paper. Bold strikes each one twice and
+// leaves the paper alone, or the second pass would wipe the first.
+static void balloonText(TFT_eSPI& t, char lines[][25], uint8_t n, int x, int y, int lh, uint16_t paper) {
+    if (s_balloonBold) t.setTextColor(Theme::BLACK);
+    else t.setTextColor(Theme::BLACK, paper);
+    for (uint8_t i = 0; i < n; i++) {
+        t.setCursor(x, y + i * lh); t.print(lines[i]);
+        if (s_balloonBold) { t.setCursor(x + 1, y + i * lh); t.print(lines[i]); }
+    }
+}
 
 static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW, int screenW, int screenH) {
     if (s_k > 1) { s_heldPet = { s, boxX * s_k, boxY * s_k, boxW * s_k, screenW * s_k, screenH * s_k, true }; return; }
@@ -707,6 +721,7 @@ static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW,
     t.setTextSize(1);
     int tw = 0;
     for (uint8_t i = 0; i < n; i++) { const int w = t.textWidth(lines[i]); if (w > tw) tw = w; }
+    if (s_balloonBold) tw++;
     // A row per line: 9 in the system font, the font's own height in the
     // 3.5in's medium one (see drawHeldBalloons()).
     const int lh = t.fontHeight() > 8 ? t.fontHeight() - 1 : 9;
@@ -725,8 +740,7 @@ static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW,
             t.drawFastVLine(tx, ty + i, 6 - 2 * i > 0 ? 6 - 2 * i : 1, paper);
             t.drawPixel(tx, ty + i - 1, Theme::BLACK);
         }
-        t.setTextColor(Theme::BLACK, paper);
-        for (uint8_t i = 0; i < n; i++) { t.setCursor(bx + 5, by + 3 + i * lh); t.print(lines[i]); }
+        balloonText(t, lines, n, bx + 5, by + 3, lh, paper);
         return;
     }
     const int anchorX = boxX + boxW / 2, bottomY = boxY - 4;
@@ -745,8 +759,7 @@ static void petBalloon(TFT_eSPI& t, const char* s, int boxX, int boxY, int boxW,
         t.drawPixel(tx - 3 + i, by + bh - 1 + i, Theme::BLACK);
         t.drawPixel(tx + 2, by + bh - 1 + i, Theme::BLACK);
     }
-    t.setTextColor(Theme::BLACK, paper);
-    for (uint8_t i = 0; i < n; i++) { t.setCursor(bx + 5, by + 3 + i * lh); t.print(lines[i]); }
+    balloonText(t, lines, n, bx + 5, by + 3, lh, paper);
 }
 
 static void clipBalloon(TFT_eSPI& t, const char* s, int clipX, int clipY, int screenW, int screenH) {
@@ -934,10 +947,12 @@ void drawHeldBalloons(TFT_eSPI& t) {
     // (2026-10-10).
     const uint8_t callerFont = t.textfont;
     if (Theme::large()) t.setTextFont(2);
+    s_balloonBold = Theme::large();
     if (s_heldPet.on) petBalloon(t, s_heldPet.s, s_heldPet.x, s_heldPet.y, s_heldPet.w, s_heldPet.sw, s_heldPet.sh);
     if (s_heldBubble.on) bubble(t, s_heldBubble.x, s_heldBubble.y, s_heldBubble.sw, s_heldBubble.s);
     s_heldPet.on = s_heldBubble.on = false;
     t.setTextFont(callerFont);
+    s_balloonBold = false;
     s_k = k;
 }
 
@@ -972,15 +987,16 @@ void reset() {
 static void bubble(TFT_eSPI& t, int x, int y, int screenW, const char* s) {
     if (s_k > 1) { s_heldBubble = { s, x * s_k, y * s_k, 0, screenW * s_k, 0, true }; return; }
     t.setTextSize(1);
-    const int w = t.textWidth(s) + 8;
+    const int w = t.textWidth(s) + 8 + (s_balloonBold ? 1 : 0);
     const int h = t.fontHeight() + 5;
     if (x + w > screenW - 2) x = screenW - 2 - w;
     if (x < 2) x = 2;
     t.fillRect(x, y, w, h, Theme::BG);
     t.drawRect(x, y, w, h, Theme::VAPOR_PINK);
-    t.setTextColor(Theme::WHITE, Theme::BG);
+    if (s_balloonBold) t.setTextColor(Theme::WHITE); else t.setTextColor(Theme::WHITE, Theme::BG);
     t.setCursor(x + 4, y + 3);
     t.print(s);
+    if (s_balloonBold) { t.setCursor(x + 5, y + 3); t.print(s); }
 }
 
 // One visit: in from the left, a beat standing beside Squachy, and out the
