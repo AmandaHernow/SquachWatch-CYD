@@ -91,6 +91,7 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | 3.5" resistive / capacitive — ESP32-3248S035R / C | BETA | |
 | ESP32-32E 2.8" / 3.5" — E32R28T / E32R35T | Via another build | Takes the 2.8" CYD ILI9341 build and the 3.5" resistive one; type the code into the flasher's board finder |
 | Freenove ESP32-S3 2.8" — FNK0104B | BETA | Capacitive touch, SDMMC card slot, WS2812 light, battery connector. Pins in [docs/PINOUT.md](docs/PINOUT.md) |
+| Freenove ESP32-S3 3.5" — FNK0104N | BETA | The black 3.5": a 320×480 panel on its own QSPI driver, capacitive touch, SDMMC card slot, WS2812 light, battery connector. Big text, and pets at double size |
 | Elecrow CrowPanel Advance 7.0 | BETA | 800×480, drawn at 400×240 doubled on purpose. Has a buzzer, silent unless you switch it on. [docs/CROWPANEL7.md](docs/CROWPANEL7.md) |
 | RockBase NM-CYD-C5 | BETA | The 2.8" CYD's glass on an ESP32-C5, the first RISC-V chip here. Scans **5 GHz** too (WIFI BANDS in Settings). [docs/NM-CYD-C5.md](docs/NM-CYD-C5.md) |
 | M5Stack StickS3 | BETA | 1.14" screen, landscape, two buttons |
@@ -310,7 +311,13 @@ to three characters. It changes the screen only; nothing stored changes.
 - **CHARGE MODE** (Settings, or hold **BOOT** on the CYD boards): radios,
   status light and screen off while it charges.
 - **BOOT** on the CYD boards: a short press turns the screen off, and
-  pressing it again turns it on.
+  only another press turns it on (**POCKET MODE**: a touch won't, so a
+  board in a pocket stays dark). Alerts still light it for their card,
+  then it goes dark again.
+- **The battery lamp** on the Freenove ESP32-S3 2.8" and 3.5" and the
+  T-Watch: a lava lamp under the menu button, filled to the charge.
+  Bubbles and a rainbow on the cable, a flicker under 10%. Boards with no
+  battery don't show one.
 - **LAST RUN** (Settings → SYSTEM): how long the previous power-up lasted.
 
 ## On the watch
@@ -319,7 +326,8 @@ The LilyGo T-Watch S3 and S3 Plus (BETA) run the whole firmware on a
 240×240 screen, plus a few things only a watch needs. They live under
 **WATCH SETTINGS**, the first row in Settings.
 
-- **The crown** turns the screen off and on, and alerts buzz on your wrist
+- **The crown** turns the screen off and only the crown turns it back on
+  (POCKET MODE), and alerts buzz on your wrist
   (BUZZ: OFF, HIGH, MED or LOW).
 - **LoRa**, on both models and receive only: Meshtastic and MeshCore at
   once, with public channels decoded into **LORA CHATS**, one tab per

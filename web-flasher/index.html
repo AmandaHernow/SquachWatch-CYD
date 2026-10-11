@@ -714,6 +714,7 @@
       </optgroup>
       <optgroup label="ESP32-S3 BOARDS">
       <option value="./manifest-freenove-s3.json">Freenove ESP32-S3 2.8&quot; &mdash; FNK0104 (BETA)</option>
+      <option value="./manifest-freenove-s3-35.json">Freenove ESP32-S3 3.5&quot; &mdash; FNK0104N (BETA)</option>
       <option value="./manifest-crowpanel7.json">Elecrow CrowPanel 7&quot; &mdash; CrowPanel Advance 7.0 (BETA)</option>
       </optgroup>
       <optgroup label="ESP32-C5 BOARDS">
@@ -1474,7 +1475,7 @@
         ['./manifest-lab-cyd.json', './manifest-lab-cyd-fast.json',
          './manifest-lab-cyd-ili9341.json', './manifest-lab-cyd-ili9341-fast.json',
          './manifest-lab-rlphantom-r.json', './manifest-lab-freenove32.json',
-         './manifest-lab-twatch-s3.json', './manifest-lab-freenove-s3.json',
+         './manifest-lab-twatch-s3.json', './manifest-lab-freenove-s3.json', './manifest-lab-freenove-s3-35.json',
          './manifest-lab-crowpanel7.json', './manifest-lab-cyd32c.json',
          './manifest-lab-cyd35-fast.json', './manifest-lab-nm-cyd-c5.json',
          './manifest-lab-cyd35c-fast.json', './manifest-lab-sticks3.json',
@@ -1639,6 +1640,7 @@
       { re: /2432S024R/,            v: './manifest-rlphantom-r.json', say: 'That’s the RL Phantom 2.4". Selected below.' },
       { re: /2432S024C/,            v: null,                          say: 'The capacitive 2.4" isn’t on the flasher yet.' },
       { re: /AWOK|MARAUDER/,        v: './manifest-awok.json',        say: 'That’s the AWOK 2.4". Selected below.' },
+      { re: /FNK0?104N/,            v: './manifest-freenove-s3-35.json', say: 'That’s the Freenove ESP32-S3 3.5" (BETA). Selected below.' },
       { re: /FNK0?104/,             v: './manifest-freenove-s3.json', say: 'That’s the Freenove ESP32-S3 2.8" (BETA). Selected below.' },
       { re: /CROWPANEL|CROW/,       v: './manifest-crowpanel7.json',  say: 'That’s the CrowPanel 7" (BETA). Selected below.' },
       { re: /T-?WATCH/,             v: './manifest-twatch-s3.json',   say: 'That’s a T-Watch S3 (BETA). Selected below.' },

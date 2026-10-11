@@ -1155,8 +1155,13 @@ int main(int argc, char** argv) {
         if (!grabbed) { grabbed = true; Squachy::trigger(Squachy::Event::HELD); }
         Squachy::grabTo(grabX, grabY);
     };
+    // SQUACHSIM_WANDERAT=n starts the wander at warm-up frame n instead of
+    // at the capture, so a clip can open partway through it.
+    const int wanderAt = getenv("SQUACHSIM_WANDERAT") ? atoi(getenv("SQUACHSIM_WANDERAT")) : -1;
+    const int8_t wanderDir = getenv("SQUACHSIM_WANDER") && atoi(getenv("SQUACHSIM_WANDER")) < 0 ? -1 : 1;
     for (int i = 0; i < frames; i++) {
         const uint32_t tNow = now + (uint32_t)i * STEP_MS;
+        if (i == wanderAt) { SimClock::nowMs = tNow; Squachy::wanderNow(wanderDir); }
         if (i > 20) grabStep();
         if (!tick(tNow)) { usage(); return 2; }
         // After the frame, so the tap lands on something just drawn:
@@ -1214,7 +1219,7 @@ int main(int argc, char** argv) {
         grabStep();
         throwStep(s, sNow);
         // SQUACHSIM_WANDER=1 or -1: his edge-to-edge wander, starting with the capture.
-        if (s == 0 && getenv("SQUACHSIM_WANDER")) { SimClock::nowMs = sNow; Squachy::wanderNow((int8_t)atoi(getenv("SQUACHSIM_WANDER"))); }
+        if (s == 0 && wanderAt < 0 && getenv("SQUACHSIM_WANDER")) { SimClock::nowMs = sNow; Squachy::wanderNow((int8_t)atoi(getenv("SQUACHSIM_WANDER"))); }
         tick(sNow);
         // --tap frame numbers run straight on through the capture, so a tap
         // can land on a frame you can actually look at afterwards.

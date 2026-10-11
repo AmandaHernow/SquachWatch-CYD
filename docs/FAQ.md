@@ -138,12 +138,14 @@ Be honest with yourself about what the PIN does: it stops a snoop who picks the 
 
 **CHARGE MODE** (Settings, every board except the watch) turns off the radios, the status light and the screen so a battery charges faster. Tap the dark screen to see how long it's been charging; tap again while that shows to wake the board.
 
-**The BOOT button** on the CYD-style boards: a short press turns the screen off, and pressing it again turns it back on. Hold it for about a second to start CHARGE MODE.
+**The BOOT button** on the CYD-style boards: a short press turns the screen off, and only another press turns it back on. That's **POCKET MODE**: a touch won't wake it, so a board in a pocket or a bag stays dark. Alerts still light it for their card and then it goes dark again. Hold BOOT for about a second to start CHARGE MODE.
+
+**The battery lamp.** On the Freenove ESP32-S3 2.8" and 3.5" and the T-Watch, a little lava lamp under the menu button is the battery: the lava is the charge. On the cable, bubbles stream up and a rainbow runs through the cap and base; under 10% it flickers. The Freenove boards work out the cable from the battery voltage jumping when you plug in, so it can take a few seconds to notice. Boards with no battery don't show a lamp.
 
 **On the T-Watch:**
 
 - POWER SAVER is on by default. On battery the screen times out whatever you set; on the charger it stays lit like a desk clock.
-- The crown turns the screen off and on.
+- The crown turns the screen off, and only the crown turns it back on (POCKET MODE).
 - **WATCH SETTINGS** (the first row in Settings) shows the BATTERY and has the battery knobs: RADIOS (how much of the time WiFi gets; Bluetooth is always on by default), BLE LISTEN, SLEEP CPU and BUZZ.
 - **TAGS + RINGS** is set to LOG ONLY by default, so trackers and Ring cameras are logged without waking the screen or buzzing. A day out otherwise means a lot of AirTags in passing cars.
 
@@ -226,6 +228,8 @@ A squad gets you:
 ## GPS and LoRa (watches only)
 
 **GPS** is on the **T-Watch S3 Plus** only. **WARDRIVE** in WATCH SETTINGS turns the GPS and the log on together: every WiFi network and Bluetooth device it hears, with position, logged only while it has a fresh fix. It holds up to 125,000 sightings across restarts. **DOWNLOAD WIGLE FILE** on the web flasher (desktop Chrome or Edge) saves it as a file you can upload to [wigle.net](https://wigle.net/uploads). The log stays on the watch until you clear it, and a duress wipe takes it with everything else. The watch also sets its clock from GPS. Wardriving was marked not road-tested when it shipped in v1.25.0, so treat it as new.
+
+**SEEN AT.** Anything the LOG kept with a GPS position shows it: long-press the device in the LOG and it says SEEN AT and where.
 
 **LoRa** is on both the T-Watch S3 and the S3 Plus, and it only listens. It decodes the public channels of Meshtastic and MeshCore, using the EU 868 or US 915 band depending on your time zone. **LORA** in WATCH SETTINGS picks BOTH, MESHTASTIC, MESHCORE or OFF, and **LORA CHATS** shows what was said, one tab per network. More in [LORA.md](LORA.md).
 

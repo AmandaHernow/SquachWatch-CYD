@@ -32,6 +32,22 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.34.0 "Lava Lamp", shot on the 3.5in CBD (480x320): the battery lamp
+    # (SQUACHSIM_BATT gives the emulator a cell: 54, 54c on the cable, 6 nearly
+    # flat), the big text on the SquachMesh warning and the alert, a visitor at
+    # the new size, C1iPPY hopping across when Squachy reaches the edge
+    # (SQUACHSIM_WANDERAT starts the wander in the warm-up, so the capture
+    # opens just before the swap), and his bold balloon after he is thrown.
+    "lava-lamp": [
+        ("clear", 40, 45, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "54"}, 1300, "YOUR BATTERY IS A LAVA LAMP NOW"),
+        ("clear", 40, 50, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "54c"}, 1300, "PLUG IN: BUBBLES AND A RAINBOW"),
+        ("clear", 40, 40, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "6"}, 1300, "NEARLY FLAT: A DYING BULB"),
+        ("meshwarn", 10, 1, [], {}, 2200, "BIG TEXT ON THE 3.5 INCH"),
+        ("alert", 40, 1, [], {}, 2000, "AND IGNORE, IN BOLD"),
+        ("clear", 90, 40, ["--noseed", "--bg", "10", "--peer", "2", "--peername", "YETI"], {"SQUACHSIM_BATT": "80"}, 1300, "VISITORS STAND BIGGER"),
+        ("clear", 200, 36, ["--noseed", "--bg", "5", "--pet", "3"], {"SQUACHSIM_WANDER": "1", "SQUACHSIM_WANDERAT": "0", "SQUACHSIM_BATT": "80"}, 1300, "PETS HOP. NO MORE TELEPORTING."),
+        ("clear", 30, 88, ["--noseed", "--bg", "5", "--pet", "3"], {"SQUACHSIM_THROW": "c:-1:0:-220:-120", "SQUACHSIM_BATT": "80"}, 2200, "THROW C1IPPY. HE HAS NOTES. IN BOLD."),
+    ],
     # v1.33.0 "Doin Time": the arrest (SQUACHSIM_JAIL=1 runs the sirens and
     # the ball drop from frame 0), the sentence in STRIPES with the ball
     # talking (=2 is already serving), a throw the chain stops short, the
@@ -293,6 +309,7 @@ CLIPS = {
 # 1 there: 480x320 doubled is a 960-pixel GIF, which is more than the notes
 # embed at anyway.
 CLIP_SIZE = {
+    "lava-lamp":      (480, 320, 1),
     "all-ears":            (240, 240, 2),
     "squachwatch-squared": (240, 240, 2),
     "the-big-screen": (480, 320, 1),
