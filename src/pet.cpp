@@ -4,6 +4,7 @@
 #include "squachy.h"
 #include "lil_guy.h"
 #include "settings.h"
+#include "sound.h"
 #include "clock.h"
 #include "state.h"
 #include <string.h>
@@ -483,6 +484,10 @@ static bool clipTalking() { return s_cLine && s_cShownMs < CLIP_TALK_MS; }
 static void clipSay(const char* line, uint32_t now, bool caught) {
     s_cShownMs = 0;
     s_cLine = line; s_cSaidAt = now ? now : 1; s_cCaught = caught; s_cAnswered = caught;
+    // The boing, but not for every tip: once in twenty seconds at most, so a
+    // chatty stretch is one boing and a balloon, not a spring factory.
+    static uint32_t boingAt = 0;
+    if (!boingAt || now - boingAt > 20000) { boingAt = now ? now : 1; Sound::play(Sound::Id::CLIPPY); }
 }
 
 bool clippyHit(int x, int y) {
@@ -554,7 +559,7 @@ void clippyRelease(uint32_t now) {
     float vx, vy;
     switch (gripLetGo(s_cG, now, vx, vy)) {
         case 0:  s_cTh = ClipThrow::NONE; clippyPoke(now); break;
-        case 1:  clipLaunch(vx, vy, now); s_cFlung = true; noteThrow(now); break;
+        case 1:  clipLaunch(vx, vy, now); s_cFlung = true; noteThrow(now); Sound::play(Sound::Id::THROW); break;
         case 2:  clipLaunch(0, 0, now); s_cFlung = false; break;    // just let go: he falls from there
         default: s_cTh = ClipThrow::NONE; break;
     }
@@ -865,7 +870,7 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
                     s_cfY = floorY;
                     s_cSqAt = now;
                     s_cSqK = s_cvY > 0.9f ? 1.0f : s_cvY / 0.9f;
-                    if (s_cBounces == 0 && s_cFlung) zLandedAt((int)s_cfX + 11);
+                    if (s_cBounces == 0 && s_cFlung) { zLandedAt((int)s_cfX + 11); Sound::play(Sound::Id::LAND); }
                     if (s_cvY > 0.2f && s_cBounces < 5) {
                         s_cvY = -s_cvY * 0.5f;
                         s_cvX *= 0.75f;

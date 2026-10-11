@@ -81,6 +81,11 @@ extern volatile bool g_consoleWatchTest;
 extern volatile bool g_consoleRotate;
 extern volatile bool g_consoleBatt;
 extern volatile bool g_consoleBattLog;
+extern volatile int8_t g_consoleSound;
+extern volatile bool g_consoleScreen;
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+extern volatile bool g_consolePowerOff;   // main.cpp: POWER OFF, the Freenove boards' deep sleep
+#endif
 extern volatile bool g_consoleRadioTest;
 extern volatile bool g_consolePmu;
 extern volatile uint8_t g_consoleGps;
@@ -584,6 +589,17 @@ void pollSerial() {
         if (strcasecmp(line, "ROT") == 0)    { g_consoleRotate = true; continue; }
         if (strcasecmp(line, "BATT") == 0)    { g_consoleBatt = true; continue; }
         if (strcasecmp(line, "BATTLOG") == 0) { g_consoleBattLog = true; continue; }
+        // SOUND 0..10 plays that sound on the Freenove S3 speaker (sound.h's
+        // order: new device, watch hit, low battery, message, visitor, throw,
+        // land, C1iPPY, toast pop, plug in, unplug); SOUND AMP HIGH / LOW
+        // flips the amplifier enable's polarity for the bench.
+        if (strcasecmp(line, "SOUND AMP HIGH") == 0) { g_consoleSound = 20; continue; }
+        if (strcasecmp(line, "SOUND AMP LOW") == 0)  { g_consoleSound = 21; continue; }
+        if (strncasecmp(line, "SOUND ", 6) == 0) { g_consoleSound = (int8_t)atoi(line + 6); continue; }
+        if (strcasecmp(line, "SCREEN") == 0) { g_consoleScreen = true; continue; }
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+        if (strcasecmp(line, "POWER OFF") == 0) { g_consolePowerOff = true; continue; }
+#endif
         if (strcasecmp(line, "RADIO TEST") == 0) { g_consoleRadioTest = !g_consoleRadioTest; Serial.printf("[radio] bench test %s\n", g_consoleRadioTest ? "ON: cycling on the cable, screen or not" : "OFF"); continue; }
         if (strcasecmp(line, "PMU") == 0)    { g_consolePmu = true; continue; }
         if (strcasecmp(line, "GPS") == 0)    { g_consoleGps = 1; continue; }

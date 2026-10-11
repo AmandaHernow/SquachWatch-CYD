@@ -366,7 +366,7 @@ static void toasterRelease(uint32_t now) {
     float vx, vy;
     switch (gripLetGo(s_tG, now, vx, vy)) {
         case 0:  s_tPh = TPhase::NONE; toasterPoke(now); break;
-        case 1:  toastLaunch(vx, vy, now); s_tFlung = true; noteThrow(now); break;
+        case 1:  toastLaunch(vx, vy, now); s_tFlung = true; noteThrow(now); Sound::play(Sound::Id::THROW); break;
         case 2:  toastLaunch(0, 0, now); s_tFlung = false; break;
         default: s_tPh = TPhase::NONE; break;
     }
@@ -523,7 +523,7 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
                     s_tSqK = s_tvY > 0.9f ? 1.0f : s_tvY / 0.9f;
                     if (s_tBounces == 0) {
                         toastCrumbs((int)s_tfX + TOAST_W / 2, (int)s_tfY + TOAST_H, now);
-                        if (s_tFlung) zLandedAt((int)s_tfX + TOAST_W / 2);
+                        if (s_tFlung) { zLandedAt((int)s_tfX + TOAST_W / 2); Sound::play(Sound::Id::LAND); }
                         if (s_tFlung) {
                             s_tlLive = true; s_tlBorn = now;
                             s_tlX = s_tfX + 8; s_tlY = s_tfY; s_tlVX = -0.03f; s_tlVY = -0.4f;
@@ -604,6 +604,7 @@ static void toasterTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
         else {
             if (!s_tPopped) {
                 s_tPopped = true;
+                Sound::play(Sound::Id::TOAST_POP);
                 s_tsLive = true; s_tsBorn = now;
                 s_tsGolden  = random(0, 50) == 0;
                 s_tsSerious = toastSerious(s_tCatchType);

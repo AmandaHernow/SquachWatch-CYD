@@ -75,6 +75,10 @@ static const SettingsRow ALL_ROWS[] = {
     // board with a buzzer, so the emulator (no board macro) never lists it.
     SettingsRow::BUZZER,
 #endif
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+    // The speaker, in the buzzer's seat: what it announces, then how loud.
+    SettingsRow::SOUND, SettingsRow::SOUND_VOLUME,
+#endif
 #if SQW_WIFI_5G
     // What the sniffer listens to, beside what it does with what it hears.
     // Only on a chip that has 5 GHz, so every other board's list is as it was.
@@ -269,6 +273,10 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::AUTO_QUIET:
 #if defined(CROWPANEL7)
         case SettingsRow::BUZZER:
+#endif
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+        case SettingsRow::SOUND:
+        case SettingsRow::SOUND_VOLUME:
 #endif
 #if SQW_WIFI_5G
         case SettingsRow::WIFI_BANDS:
@@ -791,6 +799,62 @@ static void drawRow(TFT_eSPI& t, int w, int y, int hgt, const char* label,
     if (compact) Theme::bodyFontOff(t);
 }
 
+// ---- the stepper rows ---------------------------------------------------------
+// BRIGHT and VOLUME: a percent between a real - and a real + button, at the
+// row's right-hand end where a value sits. BRIGHT used to be "BRIGHT -  +"
+// in the label with the row split down the middle, which meant a thumb
+// landing anywhere on it moved the value; now only the buttons do. The draw
+// and the hit test both go through stepperLayout(), so the buttons are
+// exactly where they look.
+static bool isStepperRow(SettingsRow r) {
+    return r == SettingsRow::BRIGHTNESS
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+        || r == SettingsRow::SOUND_VOLUME
+#endif
+        ;
+}
+bool uiSettingsIsStepper(SettingsRow r) { return isStepperRow(r); }
+static const char* stepperValue(SettingsRow r, char* buf, size_t n) {
+    unsigned pct = 0;
+    if (r == SettingsRow::BRIGHTNESS) pct = (unsigned)(Settings::brightness() * 100 / 255);
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+    else if (r == SettingsRow::SOUND_VOLUME) pct = Settings::soundVolume();
+#endif
+    snprintf(buf, n, "%u%%", pct);
+    return buf;
+}
+// Where the pieces go: the + against the right margin, the value before it,
+// the - before that. Buttons are nearly the row's height, finger-sized on
+// every panel; the value's width is measured in the row's own font.
+static void stepperLayout(TFT_eSPI& t, int w, int y, int hgt, bool compact, const char* value,
+                          int& minusX, int& plusX, int& valX, int& bw, int& bh, int& by) {
+    if (compact) Theme::bodyFontOn(t);
+    else         t.setTextSize(Theme::uiMenuTextSize(t));
+    const int vw = t.textWidth(value);
+    if (compact) Theme::bodyFontOff(t);
+    bh = hgt - 4;
+    bw = bh + 10;
+    by = y + (hgt - bh) / 2;
+    plusX  = w - 18 - bw;
+    valX   = plusX - 8 - vw;
+    minusX = valX - 8 - bw;
+}
+static void drawStepperRow(TFT_eSPI& t, int w, int y, int hgt, const char* label, const char* value,
+                           uint16_t labelColor, bool compact) {
+    drawRow(t, w, y, hgt, label, nullptr, false, labelColor, compact);
+    int mx, px, vx, bw, bh, by;
+    stepperLayout(t, w, y, hgt, compact, value, mx, px, vx, bw, bh, by);
+    if (compact) Theme::bodyFontOn(t);
+    else         t.setTextSize(Theme::uiMenuTextSize(t));
+    t.setTextColor(Theme::WHITE, Theme::BG);
+    t.setCursor(vx, y + (hgt - t.fontHeight()) / 2);
+    t.print(value);
+    if (compact) Theme::bodyFontOff(t);
+    Theme::drawWin95Button(t, mx, by, bw, bh, "-", false, true);
+    Theme::drawWin95Button(t, px, by, bw, bh, "+", false, true);
+    t.setTextSize(1);
+}
+
 // Fills in what a row actually shows. valBuf is scratch space for
 // rows that need to format a number — only valid for the duration of
 // the caller's own loop iteration, not held onto afterward.
@@ -847,10 +911,13 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             label = "LOCK BACKGROUND"; value = Settings::backgroundLocked() ? "ON" : "OFF";
             break;
         case SettingsRow::BRIGHTNESS:
-            label = "BRIGHT -  +";
-            snprintf(valBuf, valBufN, "%u%%", (unsigned)(Settings::brightness() * 100 / 255));
-            value = valBuf;
+            label = "BRIGHT"; value = stepperValue(r, valBuf, valBufN);
             break;
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+        case SettingsRow::SOUND_VOLUME:
+            label = "VOLUME"; value = stepperValue(r, valBuf, valBufN);
+            break;
+#endif
         case SettingsRow::INVERT:
             label = "INVERT COLORS"; value = Settings::inverted() ? "ON" : "OFF";
             break;
@@ -875,6 +942,14 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             // the way AT BOOT and AFTER 5 do, so nobody expects a beep per
             // alert. The rules are in crowpanel7_buzzer.h.
             label = "BUZZER"; value = Settings::buzzerOn() ? "NEW ONLY" : "OFF";
+            break;
+#endif
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+        case SettingsRow::SOUND:
+            // ALERTS is a new device, a watch-list hit and a low battery; ALL
+            // adds the squad, the throws, the pets and the lamp's cable. The
+            // rules are in sound.h.
+            label = "SOUND"; value = Settings::soundModeName();
             break;
 #endif
 #if SQW_WIFI_5G
@@ -1201,6 +1276,8 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
                 drawTwoLineRow(t, w, y, itemH, label, value, groupColor(items[idx].group),
                                items[idx].row == SettingsRow::BACKGROUND ||
                                items[idx].row == SettingsRow::DESK_BACKGROUND);
+            } else if (isStepperRow(items[idx].row)) {
+                drawStepperRow(t, w, y, itemH, label, value, groupColor(items[idx].group), h > w);
             } else {
                 drawRow(t, w, y, itemH, label, value, danger, groupColor(items[idx].group),
                         h > w);
@@ -1246,4 +1323,34 @@ SettingsRow uiSettingsHitTest(TFT_eSPI& t, int x, int y, int screenW, int screen
         idx++;
     }
     return SettingsRow::NONE;
+}
+
+int uiSettingsStepHit(TFT_eSPI& t, int x, int y, int screenW, int screenH) {
+    int top, bodyBottom, rowH, headerH, tallH;
+    computeGeom(t, screenH, top, bodyBottom, rowH, headerH, tallH);
+    DisplayItem items[LIST_MAX_N + 7];
+    uint8_t n = buildDisplayList(items);
+    { const int m = maxScroll(items, n, top, bodyBottom, rowH, headerH, tallH);
+      if (g_scroll > m) g_scroll = m; }
+    int cy = top;
+    int idx = g_scroll;
+    while (idx < n) {
+        const int itemH = itemHeight(items[idx], rowH, headerH, tallH);
+        if (cy + itemH > bodyBottom) break;
+        if (y >= cy && y < cy + itemH) {
+            if (items[idx].isHeader || !isStepperRow(items[idx].row)) return 0;
+            char valBuf[24];
+            const char* value = stepperValue(items[idx].row, valBuf, sizeof valBuf);
+            int mx, px, vx, bw, bh, by;
+            stepperLayout(t, screenW, cy, itemH, screenH > screenW, value, mx, px, vx, bw, bh, by);
+            // A few pixels of slack either side: the buttons are the row's
+            // height already, and a near miss should count, not do nothing.
+            if (x >= mx - 4 && x < mx + bw + 4) return -1;
+            if (x >= px - 4 && x < px + bw + 4) return 1;
+            return 0;
+        }
+        cy += itemH;
+        idx++;
+    }
+    return 0;
 }

@@ -287,6 +287,19 @@ namespace Settings {
     bool        buzzerOn();
     void        toggleBuzzer();
 
+    // ---- SOUND -----------------------------------------------------------
+    // The Freenove S3 boards' speaker (sound.h). SOUND is 0 OFF (the
+    // default: opt in, like the buzzer), 1 ALERTS (a new device, a watch-list
+    // hit, a low battery) or 2 ALL (those plus the squad, the throws, the
+    // pets and the lamp's cable). VOLUME is a percent, 0..100 in steps of
+    // ten from the row's - and + buttons (like BRIGHT). Only the boards with
+    // a speaker show the rows; the values are kept everywhere.
+    uint8_t     soundMode();
+    const char* soundModeName();
+    void        cycleSoundMode();
+    uint8_t     soundVolume();                    // 0..100
+    void        adjustSoundVolume(int8_t delta);  // clamps, persists
+
     // ---- LORA ------------------------------------------------------------
     // The wireless slot: OFF, FOCUS on one profile, or SURVEY over the band
     // (Lora::Mode's values), and which profile FOCUS parks on (an index into

@@ -1,5 +1,6 @@
 // SquachWatch-CYD — Squachy implementation
 #include "squachy.h"
+#include "sound.h"
 #include "theme.h"
 #include "signatures.h"
 #include "settings.h"
@@ -1896,6 +1897,7 @@ static void launch(float vx, float vy, uint32_t now) {
     mood = Mood::SHOCKED;
     moodUntil = now + 1600;
     say(pick(THROW_LINES, 5), MIN_BUBBLE_MS);
+    Sound::play(Sound::Id::THROW);
 }
 
 bool thrown() { return s_thPhase != Throw::NONE; }
@@ -8696,6 +8698,7 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
                     s_thSqAt = now;
                     s_thSqK  = s_thVY > 0.9f ? 1.0f : s_thVY / 0.9f;
                     if (s_thVY > s_thHard) s_thHard = s_thVY;
+                    if (s_thBounces == 0) Sound::play(Sound::Id::LAND);   // the first hit only
                     if (s_thVY > 0.22f && s_thBounces < 4) {
                         s_thVY = -s_thVY * 0.42f;
                         s_thVX *= 0.7f;

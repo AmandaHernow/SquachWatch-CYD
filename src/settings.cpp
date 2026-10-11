@@ -168,6 +168,9 @@ static uint8_t  s_radioDutyIx  = RADIO_DUTY_DEFAULT;
 // Opt in. The one setting here that can make a sound, so it starts off and
 // stays off until somebody finds the row. Only the CrowPanel 7 shows it.
 static bool     s_buzzer       = false;
+// The speaker (sound.h): off until somebody finds the row, MED when they do.
+static uint8_t  s_soundMode    = 0;    // 0 OFF, 1 ALERTS, 2 ALL
+static uint8_t  s_soundVol     = 25;   // percent: the speaker is loud, so it starts low
 
 // ---- LoRa -----------------------------------------------------------------
 // SURVEY by default: the detector posture, everything in the band. FOCUS is
@@ -355,6 +358,20 @@ void toggleWakeOnAlert() {
 }
 bool buzzerOn()     { return s_buzzer; }
 void toggleBuzzer() { s_buzzer = !s_buzzer; s_prefs.putBool("buzzer", s_buzzer); }
+uint8_t soundMode() { return s_soundMode; }
+const char* soundModeName() {
+    static const char* const N[] = { "OFF", "ALERTS", "ALL" };
+    return N[s_soundMode < 3 ? s_soundMode : 0];
+}
+void cycleSoundMode() { s_soundMode = (uint8_t)((s_soundMode + 1) % 3); s_prefs.putUChar("sndMode", s_soundMode); }
+uint8_t soundVolume() { return s_soundVol; }
+void adjustSoundVolume(int8_t delta) {
+    int16_t v = (int16_t)s_soundVol + delta;
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    s_soundVol = (uint8_t)v;
+    s_prefs.putUChar("sndLvl", s_soundVol);
+}
 uint8_t loraMode()  { return s_loraMode; }
 void cycleLoraMode() { s_loraMode = (uint8_t)((s_loraMode + 1) % 3); s_prefs.putUChar("loraMode", s_loraMode); }
 uint8_t loraListen() { return s_loraListen; }
@@ -546,6 +563,10 @@ void load() {
     // The T-Watch's BUZZ (haptics on an alert) already owns "buzz", and with
     // the opposite default, so the CrowPanel's buzzer keeps its own key.
     s_buzzer       = s_prefs.getBool("buzzer", false);
+    s_soundMode    = s_prefs.getUChar("sndMode", 0);
+    if (s_soundMode > 2) s_soundMode = 0;
+    s_soundVol     = s_prefs.getUChar("sndLvl", 25);
+    if (s_soundVol > 100) s_soundVol = 25;
     s_loraMode     = s_prefs.getUChar("loraMode", 2);
     if (s_loraMode > 2) s_loraMode = 2;
     s_loraFocus    = s_prefs.getUChar("loraFocus", 0);

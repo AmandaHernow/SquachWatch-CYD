@@ -7,6 +7,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <TFT_eSPI.h>
+#include "sound.h"          // the Freenove S3 speaker; no-ops everywhere else
 #if defined(CROWPANEL7)
 #include "crowpanel7_board.h"
 #include "crowpanel7_display.h"
@@ -43,6 +44,10 @@
 #include <esp_memory_utils.h> // esp_ptr_external_ram(): is the frame in PSRAM? (IDF 5 only)
 #endif
 #include <esp_system.h>      // esp_reset_reason() -- diagnostics screen
+#if defined(ESP32)
+#include <esp_sleep.h>       // deep sleep: the watch's heal cycle, the Freenove boards' POWER OFF
+#include <driver/rtc_io.h>   // the pull-up that keeps BOOT high through that sleep
+#endif
 // The core dump's own summary -- which task, and where. The emulator has
 // neither header, and nothing to summarise.
 #if __has_include(<esp_core_dump.h>)
@@ -1089,7 +1094,15 @@ static int stickListId(int x, int y) {
                 return c == SettingsConfirmTap::NONE ? -1 : 1000 + (int)c;
             }
             const SettingsRow r = uiSettingsHitTest(*canvas, x, y, w, h);
-            return r == SettingsRow::NONE ? -1 : (int)r;
+            if (r == SettingsRow::NONE) return -1;
+            // A stepper row (BRIGHT) answers only on its two buttons, each
+            // its own stop, so the cursor lands on - or + and never on the
+            // label, where a press does nothing.
+            if (uiSettingsIsStepper(r)) {
+                const int d = uiSettingsStepHit(*canvas, x, y, w, h);
+                return d ? 3000 + (int)r * 2 + (d > 0 ? 1 : 0) : -1;
+            }
+            return (int)r;
         }
         case AppState::POWER_SAVER: {
             const PowerRow r = uiPowerHitTest(*canvas, x, y, w, h);
@@ -1812,6 +1825,12 @@ static bool alertMayInterrupt(const Detection& d) {
         !s_screenDimmed && !Clock::night())
         CrowBuzzer::chirp(BUZZ_CHIRP_MS);
 #endif
+#if SQW_SPEAKER
+    // The speaker's version of the same chirp, under the same four rules.
+    // The SOUND row, night and the dimmed screen are checked in play().
+    if (&d == engine.latest() && engine.latestIsNew())
+        Sound::play(Sound::Id::NEW_DEVICE);
+#endif
 #if SQUACH_MESH
     // And the squad, for the serious kinds: the same gate, so what this board
     // would not announce to its own owner it does not announce to theirs.
@@ -2091,6 +2110,7 @@ static void enterWatchAlert() {
 #if defined(TWATCH_S3)
     twatchBuzz(Buzz::WATCH);
 #endif
+    Sound::play(Sound::Id::WATCH_HIT);   // the one sound that ignores the night
     watchAlertStart = millis();
     transitionStart = watchAlertStart;
     uiWatchAlertInit(*canvas);
@@ -2230,6 +2250,8 @@ volatile bool g_consoleI2c = false;     // I2C: a scan of the touch bus
 volatile bool g_consoleRotate = false;
 volatile bool g_consoleWatchTest = false; // WATCHTEST: watch the newest Bluetooth device, fire its alert
 volatile bool g_consoleRadioTest = false; // RADIO TEST: cycle even on the cable with the screen on (bench)
+volatile int8_t g_consoleSound = -1;      // SOUND n: play sound n on the speaker; 20/21 flip the amp pin (Freenove S3)
+volatile bool g_consoleScreen  = false;   // SCREEN: say why the screen is dark, and light it (the BOOT-button boards)
 volatile bool g_consoleBatt    = false;   // BATT: one reading, now
 volatile bool g_consoleBattLog = false;   // BATTLOG: every sample kept, newest first
 volatile bool g_consoleHeal = false;  // RADIO HEAL: take the self-heal path now, as if deaf (watch)
@@ -2699,6 +2721,7 @@ static void performWipe(WipeBoot after) {
     // And silent: a chirp mid-wipe would be the one sound this restart makes.
     CrowBuzzer::quiet();
 #endif
+    Sound::quiet();
     Security::wipeSecrets();
     engine.sd().wipe();
     BlackBox::wipe();        // the log and the crash history kept in flash
@@ -2911,8 +2934,17 @@ static bool boardBatteryState(uint8_t& pct, bool& charging) {
             hist[hi] = mv; hi = (uint8_t)((hi + 1) % 30); if (hn < 30) hn++;
             uint16_t lo = 0xFFFF, top = 0;
             for (uint8_t i = 0; i < hn; i++) { if (hist[i] < lo) lo = hist[i]; if (hist[i] > top) top = hist[i]; }
+            const bool wasChg = chg;
             if (!chg && mv >= lo + 40) chg = true;
             else if (chg && mv + 40 <= top) chg = false;
+            // The speaker's two cable sounds and its low-battery sigh. Not in
+            // the first minute: the history is still filling and a board
+            // booted on the cable would otherwise "see" it plugged in. The
+            // sigh plays once per dip under 10% and re-arms above 15%.
+            static bool lowSaid = false;
+            if (now > 60000 && chg != wasChg) Sound::play(chg ? Sound::Id::PLUG_IN : Sound::Id::UNPLUG);
+            if (!chg && p < 10 && !lowSaid && now > 60000) { lowSaid = true; Sound::play(Sound::Id::LOW_BATTERY); }
+            else if (p >= 15 || chg) lowSaid = false;
         } else { hn = 0; chg = false; }
         s_lampLog[s_lampLogAt] = { now / 1000, mv, (uint8_t)(has ? p : 255), chg };
         s_lampLogAt = (uint8_t)((s_lampLogAt + 1) % LAMP_LOG_N);
@@ -3615,6 +3647,39 @@ static void printBootBanner() {
 #if defined(TWATCH_S3)
 static void wardriveBegin();
 #endif
+// ---- text straight at the panel ----------------------------------------------
+// Three screens write at the panel rather than into the frame: the update
+// check at boot, the calibration-reset prompt and the charge screen. On the
+// Freenove 3.5" the panel is not TFT_eSPI's to write -- its text lands on the
+// QSPI bus as a green hash (seen on the board 2026-10-11) -- so there they
+// draw into the frame and push it, once the frame exists. Everywhere else
+// PANEL is the panel and panelShow() is nothing, which is what they did.
+static inline void pushFrame(int x, int y);
+#if defined(FREENOVE_S3_35)
+#define PANEL ((TFT_eSPI&)frame)
+static bool panelTextOk() { return frameBufferOk && frame.created(); }
+// Pushed the plain, waiting way rather than handed to the push task: these
+// screens are drawn once and then nothing draws for a while, and the task's
+// route swaps the frame out from under the caller for the NEXT frame, which
+// here never comes. Every row, too (invalidate): the panel is about to show
+// something nothing drew its way to.
+static void panelShow() {
+    if (!panelTextOk()) return;
+    FramePush::asyncWait();
+    FramePush::invalidate();
+    FramePush::newFrame();
+    const bool ok = FramePush::push(tft, frame.buf(), frame.bufW(), frame.bufH(), 0, 0);
+    if (!ok) pushFrame(0, 0);
+    Serial.printf("[panel] text screen: push %s, %ld rows of %ux%u (panel %dx%d rot %u, cpu %u MHz)\n",
+                  ok ? "ok" : "DECLINED", (long)FramePush::lastRows(), (unsigned)frame.bufW(), (unsigned)frame.bufH(),
+                  tft.width(), tft.height(), (unsigned)tft.getRotation(), (unsigned)getCpuFrequencyMhz());
+}
+#else
+#define PANEL tft
+static bool panelTextOk() { return true; }
+static void panelShow()   {}
+#endif
+
 void setup() {
 #if defined(ARDUINO_ARCH_ESP32) && !defined(CROWPANEL7)
     g_frameSprite = &frame;
@@ -3865,15 +3930,20 @@ void setup() {
         ledcWrite(BL_CH_CAP,  24);
         ledcWrite(BL_CH_AWOK, 24);
 #endif
-        tft.fillScreen(Theme::BG);
-        tft.setTextSize(1);
-        tft.setTextWrap(false);
-        tft.setTextColor(Theme::CYAN, Theme::BG);
-        const char* m = "CHECKING FOR UPDATES...";
-        tft.setCursor((tft.width() - tft.textWidth(m)) / 2, tft.height() / 2 - 4);
-        tft.print(m);
+        // The frame does not exist yet on the 3.5", so that board checks
+        // without the message rather than with a garbled one.
+        if (panelTextOk()) {
+            PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+            PANEL.setTextSize(1);
+            PANEL.setTextWrap(false);
+            PANEL.setTextColor(Theme::CYAN, Theme::BG);
+            const char* m = "CHECKING FOR UPDATES...";
+            PANEL.setCursor((tft.width() - PANEL.textWidth(m)) / 2, tft.height() / 2 - 4);
+            PANEL.print(m);
+            panelShow();
+        }
         OtaWifi::bootCheck(9000);
-        tft.fillScreen(Theme::BG);
+        if (panelTextOk()) { PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG); panelShow(); }
     }
 
 
@@ -4052,6 +4122,8 @@ void setup() {
                                  : "Freenove S3 3.5 -- ST77922 touch did not answer; no touch.");
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
+    Sound::begin();                       // the codec is on the touch bus, now up
+    Serial.printf("[power] boot: %s, wake cause %d\n", resetReasonName(), (int)esp_sleep_get_wakeup_cause());
 #elif defined(FREENOVE_S3)
     // The Freenove S3 2.8"'s FT6336, on I2C SDA 16 / SCL 15 at 0x38, reset on
     // GPIO18 (active low). The ES8311 codec shares the bus at 0x18. FNK0104A
@@ -4063,6 +4135,7 @@ void setup() {
                                  : "Freenove S3 -- FT6336 did not answer; no touch (FNK0104A?).");
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
+    Sound::begin();                       // the codec is on the touch bus, now up
 #elif defined(TOUCH_ON_DISPLAY_BUS)
     // AWOK's XPT2046 sits on the display's own shared VSPI bus (TOUCH_CS=21,
     // already armed by TFT_eSPI itself once awok_user_setup.h's #define
@@ -4098,11 +4171,12 @@ void setup() {
     // make touch too inaccurate to reliably re-tap a "recalibrate"
     // button, so this needs no precision at all — just a hold anywhere
     // during the window right after boot.
-    tft.fillScreen(Theme::BG);
-    tft.setTextColor(Theme::AMBER, Theme::BG);
-    tft.setTextSize(1);
-    tft.setCursor(4, 4);
-    tft.print("Hold anywhere now to reset touch calibration...");
+    PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+    PANEL.setTextColor(Theme::AMBER, Theme::BG);
+    PANEL.setTextSize(1);
+    PANEL.setCursor(4, 4);
+    PANEL.print("Hold anywhere now to reset touch calibration...");
+    panelShow();
     {
         uint32_t holdStart = 0;
         uint32_t windowStart = millis();
@@ -4127,12 +4201,13 @@ void setup() {
                     // straight back.
                     clearTftEspiBlobs();
 #endif
-                    tft.fillScreen(Theme::BG);
-                    tft.setTextColor(Theme::AMBER, Theme::BG);
-                    tft.setTextSize(2);
+                    PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+                    PANEL.setTextColor(Theme::AMBER, Theme::BG);
+                    PANEL.setTextSize(2);
                     const char* msg = "CALIBRATION RESET";
-                    tft.setCursor((tft.width() - tft.textWidth(msg)) / 2, tft.height() / 2 - 8);
-                    tft.print(msg);
+                    PANEL.setCursor((tft.width() - PANEL.textWidth(msg)) / 2, tft.height() / 2 - 8);
+                    PANEL.print(msg);
+                    panelShow();
                     delay(1200);
                     break;
                 }
@@ -4142,7 +4217,8 @@ void setup() {
             delay(10);
         }
     }
-    tft.fillScreen(Theme::BG);
+    PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+    panelShow();
 
     // Touch calibration. Every board gets the five-target calibration once:
     // at first boot, and once more after updating from a firmware that used
@@ -4902,28 +4978,33 @@ static void chargeBacklight(uint8_t duty) {
 
 static void chargeDraw(uint32_t now) {
     s_chargeDrawnAt = now;
+#if !defined(FREENOVE_S3_35)
     FramePush::busLock();                     // straight to the panel: not while a push is in flight
+#endif
     const int w = tft.width(), h = tft.height();
-    tft.fillScreen(TFT_BLACK);
+    PANEL.fillRect(0, 0, tft.width(), tft.height(), TFT_BLACK);
     const uint32_t mins = (now - s_chargeAt) / 60000UL;
     char line[32];
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(Theme::CYAN, TFT_BLACK);
-    tft.setTextSize(3);
-    tft.drawString("CHARGE MODE", w / 2, h / 2 - 50);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setTextSize(2);
+    PANEL.setTextDatum(MC_DATUM);
+    PANEL.setTextColor(Theme::CYAN, TFT_BLACK);
+    PANEL.setTextSize(3);
+    PANEL.drawString("CHARGE MODE", w / 2, h / 2 - 50);
+    PANEL.setTextColor(TFT_WHITE, TFT_BLACK);
+    PANEL.setTextSize(2);
     snprintf(line, sizeof line, "Charging %luh %02lum", (unsigned long)(mins / 60), (unsigned long)(mins % 60));
-    tft.drawString(line, w / 2, h / 2 - 10);
-    tft.setTextSize(1);
-    tft.setTextColor(Theme::blend(TFT_BLACK, TFT_WHITE, 170), TFT_BLACK);
-    tft.drawString("Radios and screen are off so the battery fills faster.", w / 2, h / 2 + 20);
-    tft.drawString("About 4-6 hours from empty.", w / 2, h / 2 + 34);
-    tft.setTextColor(Theme::GREEN, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.drawString("TAP TO WAKE UP", w / 2, h / 2 + 64);
-    tft.setTextDatum(TL_DATUM);
+    PANEL.drawString(line, w / 2, h / 2 - 10);
+    PANEL.setTextSize(1);
+    PANEL.setTextColor(Theme::blend(TFT_BLACK, TFT_WHITE, 170), TFT_BLACK);
+    PANEL.drawString("Radios and screen are off so the battery fills faster.", w / 2, h / 2 + 20);
+    PANEL.drawString("About 4-6 hours from empty.", w / 2, h / 2 + 34);
+    PANEL.setTextColor(Theme::GREEN, TFT_BLACK);
+    PANEL.setTextSize(2);
+    PANEL.drawString("TAP TO WAKE UP", w / 2, h / 2 + 64);
+    PANEL.setTextDatum(TL_DATUM);
+#if !defined(FREENOVE_S3_35)
     FramePush::busUnlock();
+#endif
+    panelShow();
 }
 
 static void enterChargeMode() {
@@ -4989,21 +5070,91 @@ static void chargeModeTick(uint32_t now) {
     delay(40);
 }
 
+#if SQW_SPEAKER
+// ---- POWER OFF, on the boards with a battery ---------------------------------
+// The two Freenove S3 boards have a cell on a connector and no power switch,
+// so BOOT held for three seconds is the switch: a note on the screen at 1.2 s
+// ("keep holding"), then the panel asleep, the backlight, the light, the
+// speaker and every radio off, and the chip in deep sleep with only BOOT able
+// to wake it. Waking is a fresh boot. "Off" still draws what the charger, the
+// LDO and the battery divider draw on their own; small, and not measured yet.
+// CHARGE MODE, which the long press starts on the other CYDs, stays on the
+// Settings row and the console here. POWER OFF on the console does this too.
+volatile bool g_consolePowerOff = false;
+static uint32_t s_offHeldAt = 0;      // when the long press began, 0 = not held
+static void cbdPowerOff() {
+    // The screen first, so the board visibly goes off the instant the hold
+    // lands. No serial flush and no radio rest: the native USB flush waits
+    // for a host that may never read (the board sat frozen with the picture
+    // up, 2026-10-11), and deep sleep takes the radios down regardless.
+    chargeBacklight(0);
+    Sound::quiet();
+    StatusLight::off();
+    Serial.println("[power] OFF: deep sleep, BOOT wakes it");
+    FramePush::asyncWait();
+    FramePush::busLock();
+#if defined(FREENOVE_S3_35)
+    St77922::writeReg(0x28, nullptr, 0);   // DISPOFF
+    St77922::writeReg(0x10, nullptr, 0);   // SLPIN
+#else
+    tft.writecommand(0x28);
+    tft.writecommand(0x10);
+#endif
+    delay(120);
+    // The wake is BOOT going LOW, and BOOT is LOW right now: the hold that
+    // asked for this. Sleeping with it still down woke the board at once,
+    // a reboot straight into the calibration prompt (2026-10-11). Wait for
+    // the release, with the screen already dark, then sleep; ten seconds at
+    // the most, in case the button is stuck.
+    for (uint32_t t0 = millis(); digitalRead(0) == LOW && millis() - t0 < 10000; ) delay(10);
+    delay(50);
+    // BOOT's pull-up is the chip's own, and the ordinary GPIO pull-ups are
+    // off in deep sleep: the pin floated, drifted low, and woke the board by
+    // itself two seconds after it slept (the console log, 2026-10-11). The
+    // RTC side of the pad has a pull-up of its own that does stay on, as
+    // long as the RTC peripherals are left powered.
+    rtc_gpio_pullup_en(GPIO_NUM_0);
+    rtc_gpio_pulldown_dis(GPIO_NUM_0);
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+    Serial.printf("[power] BOOT released; sleeping (ext0 %s)\n",
+                  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0) == ESP_OK ? "armed" : "REFUSED");
+    esp_deep_sleep_start();
+}
+#endif
+
 #if SQW_BOOT_BTN
 // BOOT, polled every pass (and every 40 ms in charge mode). Released before
 // 1.2 s it is a short press: the screen off, or back on. Held past 1.2 s it
-// starts CHARGE MODE, without waiting for the release. In charge mode either
-// wakes the board. 30 ms of contact before anything counts.
+// starts CHARGE MODE, without waiting for the release -- or, on a board with
+// a battery, says to keep holding, and at 3 s powers off. In charge mode
+// either wakes the board. 30 ms of contact before anything counts.
 static void bootButtonTick(uint32_t now) {
-    static bool was = false, longDone = false;
+    static bool was = false, longDone = false, armed = false;
     static uint32_t downAt = 0;
     const bool down = digitalRead(0) == LOW;
+    // A press that was already down when the firmware started -- the one
+    // that woke the board from POWER OFF, still held through the boot -- is
+    // not a press. Counted, it was a short press that put the screen into
+    // POCKET MODE the moment it came on, or a hold that powered the board
+    // straight back off (seen 2026-10-11). Nothing counts until the first
+    // release.
+    if (!down) armed = true;
+    if (!armed) { was = down; return; }
     if (down && !was) { downAt = now; longDone = false; }
     if (down && !longDone && now - downAt >= 1200) {
         longDone = true;
         Serial.println("[button] long press");
+#if SQW_SPEAKER
+        if (s_chargeMode) exitChargeMode();
+        else { s_offHeldAt = now ? now : 1; Theme::showToast("POWER OFF", "KEEP HOLDING BOOT", Theme::AMBER, 2200); }
+#else
         if (s_chargeMode) exitChargeMode(); else s_chargeWanted = true;
+#endif
     }
+#if SQW_SPEAKER
+    if (s_offHeldAt && down && now - downAt >= 3000) cbdPowerOff();
+    if (!down) s_offHeldAt = 0;
+#endif
     if (!down && was && !longDone && now - downAt >= 30) {
         Serial.println("[button] short press");
         if (s_chargeMode) exitChargeMode();
@@ -5025,6 +5176,21 @@ void loop() {
     bootButtonTick(millis());
 #endif
     if (g_consoleCharge) { g_consoleCharge = false; if (s_chargeMode) exitChargeMode(); else s_chargeWanted = true; }
+#if SQW_SPEAKER
+    if (g_consolePowerOff) { g_consolePowerOff = false; cbdPowerOff(); }
+#endif
+#if SQW_BOOT_BTN
+    // SCREEN on the console: says whether the screen is dark or dimmed and
+    // why, and lights it -- for a board on the bench that went dark and
+    // nobody is sure which switch did it.
+    if (g_consoleScreen) {
+        g_consoleScreen = false;
+        Serial.printf("[screen] pocket dark %d, dimmed %d, charge mode %d -> lit\n", (int)s_crownDark, (int)s_screenDimmed, (int)s_chargeMode);
+        s_crownDark = false;
+        if (s_screenDimmed) { s_screenDimmed = false; applyBrightness(); }
+        lastTouch = millis();
+    }
+#endif
     if (s_chargeWanted && !s_chargeMode) { s_chargeWanted = false; enterChargeMode(); }
     if (s_chargeMode) { chargeModeTick(millis()); return; }
 #endif
@@ -5060,6 +5226,26 @@ void loop() {
 #endif
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
     if (g_consoleBatt) { g_consoleBatt = false; boardBatteryPrintLog(); }
+    // The speaker's housekeeping: hushed while the saver has the screen
+    // dimmed; a chime for a squad message that just landed (once per
+    // message, by its arrival time); and the console's SOUND commands.
+    Sound::hush(s_screenDimmed);
+#if SQUACH_MESH
+    {
+        static uint32_t lastMsgAt = 0;
+        const MeshTalk::Message& ib = MeshTalk::inbox();
+        if (ib.have && ib.at != lastMsgAt) {
+            if (lastMsgAt) Sound::play(Sound::Id::MESSAGE);   // not the one restored at boot
+            lastMsgAt = ib.at ? ib.at : 1;
+        }
+    }
+#endif
+    if (g_consoleSound >= 0) {
+        const int8_t c = g_consoleSound; g_consoleSound = -1;
+        if (c == 20)      { Sound::ampLow(false); Serial.println("[sound] amp enable is now HIGH = on"); }
+        else if (c == 21) { Sound::ampLow(true);  Serial.println("[sound] amp enable is now LOW = on"); }
+        else if (c < (int8_t)Sound::Id::COUNT) { Serial.printf("[sound] play %d\n", c); Sound::play((Sound::Id)c, true); }
+    }
 #endif
     Clock::tick(now);   // the note to self, when it is due
 #if SQUACH_MESH && defined(BENCH_TOOLS)
@@ -6999,10 +7185,13 @@ void loop() {
                             applyColorOrder();
                             break;
                         case SettingsRow::ROTATION_LOCK: Settings::toggleRotationLock(); break;
-                        case SettingsRow::BRIGHTNESS:
-                            Settings::adjustBrightness(gestureStartX < tft.width() / 2 ? -16 : 16);
-                            applyBrightness();
+                        case SettingsRow::BRIGHTNESS: {
+                            // Only the row's - and + buttons move it; a tap on
+                            // the label or the number does nothing.
+                            const int d = uiSettingsStepHit(*canvas, gestureStartX, gestureStartY, tft.width(), tft.height());
+                            if (d) { Settings::adjustBrightness((int8_t)(d * 16)); applyBrightness(); }
                             break;
+                        }
                         case SettingsRow::CONFIDENCE: Settings::cycleMinConfidence(); break;
                         case SettingsRow::AUTO_QUIET:  Settings::cycleAutoQuiet(); break;
 #if defined(CROWPANEL7)
@@ -7013,6 +7202,24 @@ void loop() {
                             Settings::toggleBuzzer();
                             if (Settings::buzzerOn()) CrowBuzzer::chirp(BUZZ_CHIRP_MS);
                             break;
+#endif
+#if SQW_SPEAKER
+                        case SettingsRow::SOUND:
+                            // Each level plays something it unlocks: ALERTS
+                            // the new-device blips, ALL the squad chime. OFF
+                            // is silent, so the tap never sounds like a test
+                            // that passed while sound is actually off.
+                            Settings::cycleSoundMode();
+                            if (Settings::soundMode() == 1) Sound::play(Sound::Id::NEW_DEVICE, true);
+                            else if (Settings::soundMode() == 2) Sound::play(Sound::Id::MESSAGE, true);
+                            break;
+                        case SettingsRow::SOUND_VOLUME: {
+                            // Five percent a press, and the blips at the new
+                            // level so the number means something.
+                            const int d = uiSettingsStepHit(*canvas, gestureStartX, gestureStartY, tft.width(), tft.height());
+                            if (d) { Settings::adjustSoundVolume((int8_t)(d * 5)); Sound::play(Sound::Id::NEW_DEVICE, true); }
+                            break;
+                        }
 #endif
 #if SQW_WIFI_5G
                         case SettingsRow::WIFI_BANDS:

@@ -68,6 +68,10 @@ enum class SettingsRow : uint8_t {
 #if defined(CROWPANEL7)
     BUZZER,          // the CrowPanel 7 only, the one board with a buzzer: OFF, or NEW ONLY
 #endif
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+    SOUND,           // the Freenove S3 boards, which have a speaker: OFF, ALERTS or ALL
+    SOUND_VOLUME,    // and how loud: LOW, MED, HIGH
+#endif
 #if SQW_WIFI_5G
     WIFI_BANDS,      // a chip with 5 GHz only (the NM-CYD-C5): 2.4+5, or 2.4
 #endif
@@ -119,6 +123,12 @@ bool uiSettingsTapPinnedOk(int x, int y, int screenW, int screenH);
 // just the screen dimensions) since row height now depends on actual
 // font metrics -- same reasoning as ui_rawscan.cpp's uiRawScanRowAt().
 SettingsRow uiSettingsHitTest(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+// The stepper rows (BRIGHT, VOLUME) carry a real - and + button each. For a
+// tap that uiSettingsHitTest put on one of those rows: -1 on the minus, +1
+// on the plus, 0 anywhere else on the row -- which does nothing, so a thumb
+// resting on the label never nudges the value.
+int uiSettingsStepHit(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+bool uiSettingsIsStepper(SettingsRow r);
 
 // ---- confirmation panel ---------------------------------------------------
 // Two rows here cannot be taken back by tapping them again: CALIBRATE TOUCH

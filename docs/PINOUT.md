@@ -101,7 +101,13 @@ The ES8311 audio codec shares the bus at 0x18.
 | Status light — one WS2812 | 42 |
 | Battery — 200K/200K divider from the cell | 9 (ADC1) |
 | BOOT button | 0 |
-| ES8311 audio (I2S) — not used | MCK 4, BCK 5, WS 7, DOUT 8, DIN 6 |
+| ES8311 audio (I2S), the speaker | MCK 4, BCK 5, WS 7, DOUT 8, DIN 6 (mic in, not used) |
+| Speaker amplifier enable (LOW = on) | 1 |
+
+The 3.5" (FNK0104N) moves the audio pins: MCK 17, BCK 18, WS 21, DOUT 15,
+DIN 16; the amplifier enable is GPIO1 on both. The firmware's sounds live in
+src/sound.cpp: tones rendered at 16 kHz into the codec, the amplifier
+switched on only while one plays.
 
 The battery row reads the cell's voltage and a percent from it. There is no
 fuel gauge, and the charger's CHRG line drives an LED rather than a GPIO, so

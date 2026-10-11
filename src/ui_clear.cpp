@@ -1,6 +1,7 @@
 // SquachWatch-CYD — clear (idle) screen implementation
 #include "ui_clear.h"
 #include "clock.h"      // the watch's corner clock
+#include "sound.h"      // yoo-hoo, when a visitor walks in
 #include "draw_band.h"
 #include "frame_prof.h"
 // Needed this early: the message helpers sit up with the visit machine,
@@ -2491,6 +2492,7 @@ static void visitTick(uint32_t now) {
         s_hosting   = *g;                   // copied once, on arrival
         s_hostingId = id;
         s_vp = VisitPhase::ARRIVING; s_vpAt = now;
+        Sound::play(Sound::Id::VISITOR);
         s_guestTurn = true;                 // so the HOST speaks first
         s_hangStep  = 0;                    // and asks the first question
         s_guestLaughUntil = 0;              // no laughter carried in from
