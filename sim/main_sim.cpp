@@ -592,6 +592,9 @@ int main(int argc, char** argv) {
         Theme::showToast("HEADS-UP", huSub, Theme::AMBER, 8000);
         Squachy::announce(huLine);
     }
+    // SQUACHSIM_POWEROFF=1: the note the Freenove S3 boards show while BOOT
+    // is held toward POWER OFF, for the release clip.
+    if (getenv("SQUACHSIM_POWEROFF")) Theme::showToast("POWER OFF", "KEEP HOLDING BOOT", Theme::AMBER, 8000);
     // SQUACHSIM_SAY="LINE": a line in his bubble as the screen opens, for
     // comparing bubble sizes across panels.
     if (const char* say = getenv("SQUACHSIM_SAY")) Squachy::announce(say);
@@ -677,7 +680,7 @@ int main(int argc, char** argv) {
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
         if      (screen == "clear")    { Theme::setRedGlyph(!Squachy::th3Unlocked()); uiClearEmoteTick(t); uiClearTick(frame, t, engine, true, false);
-                                         if (headsUp) Theme::drawToast(frame, t); }
+                                         if (headsUp || getenv("SQUACHSIM_POWEROFF")) Theme::drawToast(frame, t); }
         else if (screen == "log") {
             const bool info = (infoType >= 0);
             const DetectionType it = info ? (DetectionType)infoType : DetectionType::UNKNOWN;

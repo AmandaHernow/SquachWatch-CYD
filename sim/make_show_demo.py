@@ -32,6 +32,22 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.35.0 "Pump Up the Jam", shot on the 3.5in CBD (480x320). A GIF has no
+    # sound, so the captions carry it: the SOUND and VOLUME rows
+    # (SQUACHSIM_SPEAKER lists them; the emulator has no speaker), then each
+    # moment that makes a noise -- a throw and its landing, C1iPPY thrown, a
+    # catch popping toast, a visitor walking in, the cable going in -- then
+    # BRIGHT's new buttons and the POWER OFF note (SQUACHSIM_POWEROFF).
+    "pump-up-the-jam": [
+        ("settings", 10, 14, ["--scroll", "0"], {"SQUACHSIM_SPEAKER": "1"}, 1900, "SQUACHY GOT A SPEAKER. IT STARTS AT 25%. TRUST US."),
+        ("clear", 40, 70, ["--noseed", "--bg", "5"], {"SQUACHSIM_THROW": "s:200:190:330:150", "SQUACHSIM_BATT": "80"}, 1300, "THROW HIM: WHEEE... SPLAT."),
+        ("clear", 30, 60, ["--noseed", "--bg", "5", "--pet", "3"], {"SQUACHSIM_THROW": "c:-1:0:-220:-120", "SQUACHSIM_BATT": "80"}, 1300, "C1IPPY GOES BOING"),
+        ("clear", 10, 64, ["--noseed", "--bg", "2", "--pet", "4"], {"SQUACHSIM_CLIPCATCH": "1", "SQUACHSIM_BATT": "80"}, 1300, "A CATCH: THE TOASTER GOES PTOING"),
+        ("clear", 4, 60, ["--noseed", "--bg", "10", "--peer", "2", "--peername", "YETI"], {"SQUACHSIM_BATT": "80"}, 1300, "A VISITOR WALKS IN: YOO-HOO!"),
+        ("clear", 40, 45, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "54c"}, 1300, "PLUG IN: POWER UP!"),
+        ("settings", 10, 12, ["--scroll", "6"], {"SQUACHSIM_PAGE": "1"}, 1600, "BRIGHT GOT REAL - AND + BUTTONS"),
+        ("clear", 20, 24, ["--noseed", "--bg", "5"], {"SQUACHSIM_POWEROFF": "1", "SQUACHSIM_BATT": "80"}, 1900, "HOLD BOOT THREE SECONDS: LIGHTS OUT"),
+    ],
     # v1.34.0 "Lava Lamp", shot on the 3.5in CBD (480x320): the battery lamp
     # (SQUACHSIM_BATT gives the emulator a cell: 54, 54c on the cable, 6 nearly
     # flat), the big text on the SquachMesh warning and the alert, a visitor at
@@ -309,6 +325,7 @@ CLIPS = {
 # 1 there: 480x320 doubled is a 960-pixel GIF, which is more than the notes
 # embed at anyway.
 CLIP_SIZE = {
+    "pump-up-the-jam": (480, 320, 1),
     "lava-lamp":      (480, 320, 1),
     "all-ears":            (240, 240, 2),
     "squachwatch-squared": (240, 240, 2),

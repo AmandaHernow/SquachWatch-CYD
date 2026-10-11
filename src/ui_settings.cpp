@@ -1,5 +1,8 @@
 // SquachWatch-CYD — settings screen implementation
 #include "ui_settings.h"
+#if !defined(ESP32)
+#include <stdlib.h>     // getenv: the emulator's SQUACHSIM_SPEAKER
+#endif
 #include "wardrive.h"
 #if SQUACH_LORA
 #include "ui_lorachat.h"
@@ -75,7 +78,7 @@ static const SettingsRow ALL_ROWS[] = {
     // board with a buzzer, so the emulator (no board macro) never lists it.
     SettingsRow::BUZZER,
 #endif
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+#if SQW_SOUND_ROWS
     // The speaker, in the buzzer's seat: what it announces, then how loud.
     SettingsRow::SOUND, SettingsRow::SOUND_VOLUME,
 #endif
@@ -274,7 +277,7 @@ static RowGroupId groupFor(SettingsRow r) {
 #if defined(CROWPANEL7)
         case SettingsRow::BUZZER:
 #endif
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+#if SQW_SOUND_ROWS
         case SettingsRow::SOUND:
         case SettingsRow::SOUND_VOLUME:
 #endif
@@ -367,6 +370,11 @@ static uint8_t buildDisplayList(DisplayItem* out) {
         // Not a secret, just impossible: a board without a second app slot or
         // a Bluetooth server has nothing to update into.
         if ((r == SettingsRow::UPDATE_FIRMWARE || r == SettingsRow::UPDATE_CHECK) && !OtaCore::available()) continue;
+#if SQW_SOUND_ROWS && !defined(ESP32)
+        // The emulator has no speaker: the rows are there for the release
+        // clip to show, and only when it asks.
+        if ((r == SettingsRow::SOUND || r == SettingsRow::SOUND_VOLUME) && !getenv("SQUACHSIM_SPEAKER")) continue;
+#endif
         rows[n++] = r;
     }
 
@@ -808,7 +816,7 @@ static void drawRow(TFT_eSPI& t, int w, int y, int hgt, const char* label,
 // exactly where they look.
 static bool isStepperRow(SettingsRow r) {
     return r == SettingsRow::BRIGHTNESS
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+#if SQW_SOUND_ROWS
         || r == SettingsRow::SOUND_VOLUME
 #endif
         ;
@@ -817,7 +825,7 @@ bool uiSettingsIsStepper(SettingsRow r) { return isStepperRow(r); }
 static const char* stepperValue(SettingsRow r, char* buf, size_t n) {
     unsigned pct = 0;
     if (r == SettingsRow::BRIGHTNESS) pct = (unsigned)(Settings::brightness() * 100 / 255);
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+#if SQW_SOUND_ROWS
     else if (r == SettingsRow::SOUND_VOLUME) pct = Settings::soundVolume();
 #endif
     snprintf(buf, n, "%u%%", pct);
@@ -913,7 +921,7 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
         case SettingsRow::BRIGHTNESS:
             label = "BRIGHT"; value = stepperValue(r, valBuf, valBufN);
             break;
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+#if SQW_SOUND_ROWS
         case SettingsRow::SOUND_VOLUME:
             label = "VOLUME"; value = stepperValue(r, valBuf, valBufN);
             break;
@@ -944,7 +952,7 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             label = "BUZZER"; value = Settings::buzzerOn() ? "NEW ONLY" : "OFF";
             break;
 #endif
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+#if SQW_SOUND_ROWS
         case SettingsRow::SOUND:
             // ALERTS is a new device, a watch-list hit and a low battery; ALL
             // adds the squad, the throws, the pets and the lamp's cable. The
