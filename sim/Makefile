@@ -128,7 +128,6 @@ UI_SRCS  := $(SRC)/theme.cpp \
             $(SRC)/frame_push.cpp \
             $(SRC)/frame_prof.cpp \
             $(SRC)/fast_sprite.cpp \
-            $(SRC)/gnss.cpp \
             $(SRC)/wardrive_fmt.cpp \
             $(SRC)/wifi_auth.cpp \
             $(SRC)/wardrive_seen.cpp \
