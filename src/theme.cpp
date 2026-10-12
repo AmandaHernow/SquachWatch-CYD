@@ -7820,8 +7820,22 @@ static const uint8_t  GIB_CITY = 16;      // slots for the still rear skyline
 static const float    GIB_CAMY =  70.0f;  // camera height above the floor
 static const float    GIB_SPEED =  0.20f; // world units per millisecond
 
+// -DSQW_GIB_PROFILE=1 (bench): microseconds per part of the Gibson, and of
+// its sky, every 32 frames on the console.
+#if SQW_GIB_PROFILE
+static uint32_t s_gp[8], s_gpN = 0, s_gpAt = 0;
+#define GP_MARK(i) do { const uint32_t _m = micros(); s_gp[i] += _m - s_gpAt; s_gpAt = _m; } while (0)
+static uint32_t s_gs[6], s_gsAt = 0;
+#define GS_MARK(i) do { const uint32_t _m = micros(); s_gs[i] += _m - s_gsAt; s_gsAt = _m; } while (0)
+#else
+#define GP_MARK(i) do {} while (0)
+#define GS_MARK(i) do {} while (0)
+#endif
 void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
                 const DetectionEngine& eng) {
+#if SQW_GIB_PROFILE
+    s_gpAt = micros();
+#endif
     const int w = t.width();
     if (yEnd - yStart < 48) return;
 
@@ -7999,6 +8013,10 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
     const float    lockA   = 1.0f - lockK * 0.7f;
     const uint16_t lockCol = colorFor(lockType);
 
+    GP_MARK(0);
+#if SQW_GIB_PROFILE
+    s_gsAt = micros();
+#endif
     // ---- night sky ---------------------------------------------------
     t.fillRect(0, yStart, w, yEnd - yStart, BG);
     {
@@ -8073,6 +8091,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         // repainted as the moon tinted by that beam, at the same strength the
         // beam has against the sky. Under a thousand pixels, before the skyline,
         // so the buildings still eclipse it as before.
+        GS_MARK(0);
         int  tri[2][3][6];                       // [beam][level][x0,y0,x1,y1,x2,y2]
         bool triOn[2] = { false, false };
         {
@@ -8112,6 +8131,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         // as fillTriangle() was handed them, so the tint stops precisely where
         // the beam does, and the moon's own colour at each pixel is worked out
         // from the same three craters it was drawn with.
+        GS_MARK(1);
         if (moonOn && (triOn[0] || triOn[1])) {
             static const uint8_t TINT[3] = { 96, 66, 44 };   // core, middle, edge
             auto inside = [](const int* v, int px, int py) {
@@ -8122,7 +8142,25 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
             };
             auto inCircle = [](int dx, int dy, int r) { return dx * dx + dy * dy <= r * r; };
             const int R = mr + 2;
-            for (int py = my - R; py <= my + R; py++) {
+            // Each beam triangle's bounding box, so a pixel nowhere near a
+            // beam skips the three edge tests -- for every pixel of the moon,
+            // every frame, those were 3.9 ms of the Gibson on the ESP32-C5
+            // (2026-10-12). The same pixels come out either way.
+            int  box[2][3][4];   // [beam][level][x0, y0, x1, y1]
+            bool nearMoon = false;
+            auto lo3 = [](int a, int b, int c) { return a < b ? (a < c ? a : c) : (b < c ? b : c); };
+            auto hi3 = [](int a, int b, int c) { return a > b ? (a > c ? a : c) : (b > c ? b : c); };
+            for (uint8_t L = 0; L < 2; L++) {
+                if (!triOn[L]) continue;
+                for (int q = 0; q < 3; q++) {
+                    const int* v = tri[L][q];
+                    int* b = box[L][q];
+                    b[0] = lo3(v[0], v[2], v[4]); b[2] = hi3(v[0], v[2], v[4]);
+                    b[1] = lo3(v[1], v[3], v[5]); b[3] = hi3(v[1], v[3], v[5]);
+                    if (b[2] >= mx - R && b[0] <= mx + R && b[3] >= my - R && b[1] <= my + R) nearMoon = true;
+                }
+            }
+            for (int py = my - R; nearMoon && py <= my + R; py++) {
                 if (py < yStart) continue;
                 for (int px = mx - R; px <= mx + R; px++) {
                     const int dx = px - mx, dy = py - my;
@@ -8131,8 +8169,11 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
                     int lvl = 3;
                     for (uint8_t L = 0; L < 2; L++) {
                         if (!triOn[L]) continue;
-                        for (int q = 0; q < 3 && q < lvl; q++)
+                        for (int q = 0; q < 3 && q < lvl; q++) {
+                            const int* b = box[L][q];
+                            if (px < b[0] || px > b[2] || py < b[1] || py > b[3]) continue;
                             if (inside(tri[L][q], px, py)) { lvl = q; break; }
+                        }
                     }
                     if (lvl > 2) continue;
                     uint16_t base = halo;
@@ -8160,6 +8201,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         // screens that draw this background each hand it a different band
         // height, so anything baked in pixels is right on one of them and wrong
         // on the other two.
+        GS_MARK(2);
         struct CityB { uint16_t xf, wf, hf; uint8_t hue, tone; };
         static CityB  city[GIB_CITY];
         static uint8_t cityN   = 0;
@@ -8327,6 +8369,8 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GS_MARK(3);
+    GP_MARK(1);
     // ---- floor -------------------------------------------------------
     {
         const float spacing = (float)GIB_SPAN / 17.0f;
@@ -8386,6 +8430,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GP_MARK(2);
     // ---- channel meter bridge ----------------------------------------
     // Thirteen live channel levels down the right edge, drawn BEFORE the
     // corridor so the towers pass in front of it.
@@ -8446,6 +8491,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GP_MARK(3);
     // ---- towers, far to near -----------------------------------------
     uint8_t order[GIB_N];
     float   zs[GIB_N];
@@ -8623,34 +8669,42 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GP_MARK(4);
     // ---- the instrument ----------------------------------------------
+    // In whole numbers, x 256 throughout (isin256, turnOf): two or three
+    // sines for every other column, and on the ESP32-C5 -- no floating-point
+    // unit -- that was most of a 60 ms background on the Marauder V8
+    // (2026-10-12). The shape is the same; only the arithmetic moved.
     const int      mid = yStart + bandH * 56 / 100;
-    const float    lim = (float)bandH * 0.24f;
+    const int32_t  lim = bandH * 6144 / 100;            // x 256: bandH x 0.24
     const uint16_t traceCol = locked ? blend(traceLit, lockCol, (uint16_t)(90.0f * lockA))
                                      : traceLit;
+    const uint16_t t300 = turnOf(now, 300.0f), t190 = turnOf(now, 190.0f), t38 = turnOf(now, 38.0f);
+    const int32_t  lockLeft = locked ? (int32_t)((1.0f - lockK) * 256.0f) : 0;   // x 256
     int prevY = mid;
     for (int x = 0; x < w; x += 2) {
-        const float chf = 1.0f + (float)x * 12.0f / (float)(w - 1);
-        int c0 = (int)chf; if (c0 < 1) c0 = 1; if (c0 > 13) c0 = 13;
-        const int   c1 = (c0 < 13) ? c0 + 1 : 13;
-        const float fr = chf - (float)c0;
-        float act = ((float)eng.channelActivity((uint8_t)c0) * (1.0f - fr)
-                   + (float)eng.channelActivity((uint8_t)c1) * fr) * 0.01f;
-        if (act > 1.0f) act = 1.0f;
+        const int chf = 256 + (x * 12 * 256) / (w - 1);   // x 256: channel 1..13 across the width
+        int c0 = chf >> 8; if (c0 < 1) c0 = 1; if (c0 > 13) c0 = 13;
+        const int c1 = (c0 < 13) ? c0 + 1 : 13;
+        const int fr = chf - c0 * 256;
+        int act = ((int)eng.channelActivity((uint8_t)c0) * (256 - fr)
+                 + (int)eng.channelActivity((uint8_t)c1) * fr) / 100;   // x 256, 0..1
+        if (act > 256) act = 256;
 
-        float v = sinf((float)x * 0.062f + (float)now / 300.0f) * lim * 0.15f
-                + sinf((float)x * 0.171f - (float)now / 190.0f) * lim * 0.10f;
-        v -= act * lim * 0.85f;                    // real traffic pushes the trace up
+        int32_t v = isin256((uint16_t)(x * 647  + t300)) * lim * 15 / 25600     // x 0.062 rad, x 0.15
+                  + isin256((uint16_t)(x * 1784 - t190)) * lim * 10 / 25600;    // x 0.171 rad, x 0.10
+        v -= act * lim * 85 / 25600;                // real traffic pushes the trace up
         if (locked) {
-            const float d = (float)(x - ringX);
-            float bell = 1.0f / (1.0f + d * d * 0.0011f);
-            bell *= bell;                       // tails tight enough to be local
-            v += bell * sinf(d * 0.42f - (float)now / 38.0f) * lim * 1.7f * (1.0f - lockK);
+            const int d = x - ringX;
+            int32_t bell = 65536 / (256 + d * d * 282 / 1000);   // x 256: 1 / (1 + d^2 x 0.0011)
+            bell = bell * bell / 256;                // tails tight enough to be local
+            v += (int32_t)((int64_t)bell * isin256((uint16_t)(d * 4381 - t38)) * lim * 17 * lockLeft
+                           / ((int64_t)10 * 256 * 256 * 256));   // d x 0.42 rad, x 1.7
         }
         if (v >  lim) v =  lim;
         if (v < -lim) v = -lim;
 
-        const int y = mid + (int)v;
+        const int y = mid + v / 256;
         int a = (y < prevY) ? y : prevY;
         int b = (y > prevY) ? y : prevY;
         if (a < yStart)   a = yStart;
@@ -8659,6 +8713,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         prevY = y;
     }
 
+    GP_MARK(5);
     // ---- the feed ----------------------------------------------------
     t.setTextSize(1);
     const uint8_t step = (uint8_t)((now / 620u) % GIB_FEED_N);
@@ -8694,6 +8749,17 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
     const int labelY = yStart + 1;
     t.setCursor(labelY < ICON_BOX_H ? SETTINGS_ICON_W + 3 : 3, labelY);
     t.print("GIBSON // 2.4GHz");
+    GP_MARK(6);
+#if SQW_GIB_PROFILE
+    if (++s_gpN == 32) {
+        Serial.printf("[gib] us/frame: setup %lu  sky %lu  floor %lu  meters %lu  towers %lu  trace %lu  feed %lu\n",
+                      s_gp[0] / 32, s_gp[1] / 32, s_gp[2] / 32, s_gp[3] / 32, s_gp[4] / 32, s_gp[5] / 32, s_gp[6] / 32);
+        Serial.printf("[gib] sky: fill+stars+moon %lu  beams %lu  moon-in-beams %lu  city %lu\n",
+                      s_gs[0] / 32, s_gs[1] / 32, s_gs[2] / 32, s_gs[3] / 32);
+        memset(s_gs, 0, sizeof s_gs);
+        memset(s_gp, 0, sizeof s_gp); s_gpN = 0;
+    }
+#endif
 }
 
 
@@ -8701,17 +8767,22 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
 // paint the sky) and drawSunsetSun (to paint its horizon-cutout
 // stripes with the matching sky color instead of a flat erase) so the
 // sun reads as sinking INTO the sky rather than punching a hole in it.
+//
+// In 1/256ths rather than floats: it is asked once per sky row and once per
+// water row, and on the ESP32-C5 (no floating-point unit) the float version
+// was a measurable slice of SYNTHWAVE's frame.
 static uint16_t sunsetSkyColorAt(TFT_eSPI& t, int y, int yTop, int yHoriz) {
-    float tt = (float)(y - yTop) / (float)(yHoriz - yTop);
-    if (tt < 0.0f) tt = 0.0f;
-    if (tt > 1.0f) tt = 1.0f;
+    const int span = yHoriz - yTop;
+    int tt = span > 0 ? ((y - yTop) * 256) / span : 0;   // 0..256
+    if (tt < 0)   tt = 0;
+    if (tt > 256) tt = 256;
     uint8_t r, g, b;
-    if (tt < 0.5f) {
-        float bl = tt * 2.0f;
-        r = (uint8_t)(15 + bl * 150); g = 0; b = (uint8_t)(55 - bl * 20);
+    if (tt < 128) {
+        const int bl = tt * 2;
+        r = (uint8_t)((15 * 256 + bl * 150) / 256); g = 0; b = (uint8_t)((55 * 256 - bl * 20) / 256);
     } else {
-        float bl = (tt - 0.5f) * 2.0f;
-        r = (uint8_t)(165 + bl * 90); g = (uint8_t)(bl * 75); b = (uint8_t)(35 - bl * 15);
+        const int bl = (tt - 128) * 2;
+        r = (uint8_t)((165 * 256 + bl * 90) / 256); g = (uint8_t)((bl * 75) / 256); b = (uint8_t)((35 * 256 - bl * 15) / 256);
     }
     return t.color565(r, g, b);
 }
@@ -8846,6 +8917,27 @@ void drawRetroFloor(TFT_eSPI& t, uint32_t now, int yHoriz, int yBottom) {
 // matching drawSunsetSun's five concentric bands. Split out so the
 // water reflection below can shade itself the same way without
 // re-drawing circles it would then have to distort.
+// sunBandColor() with rr = ad / r taken as whole numbers: the water's
+// reflection asks once a row, and the C5 has no floating point.
+static uint16_t sunBandColorAt(int ad, int r) {
+    if (ad * 100 > 88 * r) return (uint16_t)0xF98A;
+    if (ad * 100 > 72 * r) return (uint16_t)0xFB25;
+    if (ad * 100 > 54 * r) return (uint16_t)0xFD22;
+    if (ad * 100 > 36 * r) return (uint16_t)0xFEA8;
+    return                        (uint16_t)0xFF92;
+}
+// floor(sqrt(v)) for v >= 0, in whole numbers.
+static int isqrtInt(int v) {
+    if (v <= 0) return 0;
+    uint32_t x = (uint32_t)v, r = 0, bit = 1u << 30;
+    while (bit > x) bit >>= 2;
+    while (bit) {
+        if (x >= r + bit) { x -= r + bit; r = (r >> 1) + bit; }
+        else r >>= 1;
+        bit >>= 2;
+    }
+    return (int)r;
+}
 static uint16_t sunBandColor(TFT_eSPI& t, float rr) {
     if (rr > 1.0f) rr = 1.0f;
     if (rr > 0.88f) return (uint16_t)0xF98A;
@@ -8877,8 +8969,19 @@ static uint16_t sunBandColor(TFT_eSPI& t, float rr) {
 // gradient function and circle equation the sky and sun were drawn
 // from, one span per row -- a few hundred draw calls rather than tens
 // of thousands, and it looks identical because it is the same maths.
+// -DSQW_SYNTH_PROFILE=1 (bench): microseconds per part of the scene, every
+// 32 frames on the console. How the water was found to be 70 ms on the C5.
+#if SQW_SYNTH_PROFILE
+static uint32_t s_sp[8], s_spN = 0, s_spAt = 0;
+#define SP_MARK(i) do { const uint32_t _m = micros(); s_sp[i] += _m - s_spAt; s_spAt = _m; } while (0)
+#else
+#define SP_MARK(i) do {} while (0)
+#endif
 void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
                    float horizonFrac) {
+#if SQW_SYNTH_PROFILE
+    s_spAt = micros();
+#endif
     const int w = t.width();
     const int band = yBottom - yTop;
     if (band < 48 || w < 32) return;
@@ -8919,6 +9022,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         t.drawPixel(stx[i], yTop + sty[i], t.color565(bri, bri, (uint8_t)(bri * 0.88f)));
     }
 
+    SP_MARK(0);
     // ---- sun -------------------------------------------------------
     const int sunR  = (skyH * 4) / 5;
     const int sunCx = w / 2;
@@ -8926,6 +9030,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
     // horizon put the top edge off the band entirely.
     const int sunCy = yHoriz - (sunR / 4);
     drawSunsetSun(t, sunCx, sunCy, sunR, yTop, yHoriz);
+    SP_MARK(1);
 
     // ---- ridgeline -------------------------------------------------
     // Two layers, paler and taller behind, darker in front, so the
@@ -8955,13 +9060,14 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
             int h0 = (pk[i]     * maxH) / 100;
             int h1 = (pk[i + 1] * maxH) / 100;
             for (int x = x0; x <= x1 && x < w; x++) {
-                float f = (x1 > x0) ? (float)(x - x0) / (float)(x1 - x0) : 0.0f;
-                int hh = h0 + (int)((h1 - h0) * f);
+                // The straight line between the two peaks, in whole numbers.
+                const int hh = h0 + (x1 > x0 ? ((h1 - h0) * (x - x0)) / (x1 - x0) : 0);
                 if (hh > 0) t.drawFastVLine(x, yHoriz - hh, hh, c);
             }
         }
     }
 
+    SP_MARK(2);
     // ---- birds -----------------------------------------------------
     // Drawn after the ridgeline so nothing occludes them: they are the
     // nearest thing in the scene. Position is derived straight from
@@ -8988,18 +9094,20 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
             birdsInited = true; birdW = w; birdH = skyH;
         }
         const uint16_t birdCol = (uint16_t)0x1824;
-        const float    span    = (float)(w + 28);
+        const uint32_t span    = (uint32_t)(w + 28);
         for (uint8_t i = 0; i < NBIRD; i++) {
-            const float spd = 0.009f + (float)(i % 3) * 0.005f;   // px per ms
-            const float fx  = fmodf((float)now * spd + (float)i * 63.0f, span) - 14.0f;
-            const int   x   = (int)fx;
+            // 0.009, 0.014 or 0.019 px per ms, in whole numbers: the C5 has
+            // no floating-point unit, and a float `now` loses whole
+            // milliseconds after four hours up.
+            const uint32_t spd = 9 + (uint32_t)(i % 3) * 5;          // px per 1000 ms
+            const int   x   = (int)(((uint64_t)now * spd / 1000 + (uint32_t)i * 63) % span) - 14;
             const int   y   = yTop + birdY[i];
             if (y < yTop + 1 || y >= yHoriz - 1) continue;
             const int   sz  = birdSz[i];
             // Wing beat. Each bird carries its own phase so the flock
             // does not pulse in unison, which reads as one object.
-            const float flap = sinf((float)now / (120.0f + i * 17.0f) + (float)i * 1.7f);
-            const int   dy   = (int)(flap * (float)sz * 0.7f);
+            const int   flap = isin256((uint16_t)(turnOf(now, 120.0f + i * 17.0f) + i * 17731));   // + i x 1.7 rad
+            const int   dy   = (flap * sz * 179) / 65536;                                         // x 0.7
             if (x - sz < 0 || x + sz >= w) continue;
             // Two shallow strokes per wing give the gull kink; a single
             // straight V reads as a chevron, not a bird.
@@ -9010,6 +9118,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         }
     }
 
+    SP_MARK(3);
     // ---- horizon bloom ---------------------------------------------
     for (int dy = -2; dy <= 1; dy++) {
         int y = yHoriz + dy;
@@ -9028,15 +9137,26 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
     // and show nothing. What reads as a moving surface is a travelling
     // *brightness* ripple, one sinf per row. The sun's reflection does
     // get displaced, because there the shape is visible.
+    //
+    // All in whole numbers (isin256, turnOf): up to six sines a row, a
+    // hundred-odd rows, and on the ESP32-C5 -- no floating-point unit --
+    // each sinf() was a hundred microseconds of software arithmetic. The
+    // water alone took 70 ms of an 85 ms frame on the Marauder V8
+    // (2026-10-12). d, the depth from horizon (0) to viewer (1), is kept as
+    // the row offset dy over seaH; each "d x k radians" becomes
+    // dy x (k x 65536 / 2 pi) / seaH of a sixteen-bit turn.
     const uint16_t waterBase = (uint16_t)0x0803;
+    const uint16_t t210 = turnOf(now, 210.0f), t130 = turnOf(now, 130.0f);
+    const uint16_t t190 = turnOf(now, 190.0f), t310 = turnOf(now, 310.0f);
+    const uint16_t t260 = turnOf(now, 260.0f), t153 = turnOf(now, 260.0f / 1.7f);
     for (int y = DrawBand::top(yHoriz); y < DrawBand::bot(yBottom); y++) {
-        const float d = (float)(y - yHoriz) / (float)seaH;   // 0 horizon, 1 viewer
-        const int srcY = yHoriz - (int)(d * skyH * 0.82f);
+        const int dy = y - yHoriz;                            // d = dy / seaH
+        const int srcY = yHoriz - (dy * skyH * 82) / (seaH * 100);
 
         // Two ripple rates so the surface never pulses uniformly.
-        float rip = sinf(d * 34.0f - (float)now / 210.0f)
-                  + 0.5f * sinf(d * 61.0f + (float)now / 130.0f);
-        int dim = (int)(196.0f - d * 118.0f + rip * 17.0f);
+        const int rip = isin256((uint16_t)((dy * 354633) / seaH - t210))            // d x 34
+                      + isin256((uint16_t)((dy * 636253) / seaH + t130)) / 2;       // d x 61
+        int dim = 196 - (dy * 118) / seaH + (rip * 17) / 256;
         if (dim < 24)  dim = 24;
         if (dim > 255) dim = 255;
         const uint16_t waterC =
@@ -9047,7 +9167,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         // the mirrored row.
         const int delta = srcY - sunCy;
         if (delta <= -sunR || delta >= sunR) continue;
-        const int half = (int)sqrtf((float)(sunR * sunR - delta * delta));
+        const int half = isqrtInt(sunR * sunR - delta * delta);
         if (half <= 0) continue;
 
         // Two incommensurate rates, not one. A single sine gives gaps at
@@ -9056,27 +9176,27 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         // frequency (and a different time rate) means the pattern never
         // repeats over the surface. They also open up toward the viewer,
         // where the water is choppier.
-        const float gapPhase = sinf(d * 62.0f - (float)now / 190.0f)
-                             + 0.55f * sinf(d * 23.0f + (float)now / 310.0f);
-        if (gapPhase > 0.05f - d * 0.40f) continue;
+        const int gap = isin256((uint16_t)((dy * 646683) / seaH - t190))                  // d x 62
+                      + (isin256((uint16_t)((dy * 239899) / seaH + t310)) * 141) / 256;   // 0.55, d x 23
+        if (gap > 13 - (dy * 102) / seaH) continue;                                       // 0.05 - d x 0.40
 
-        const float ph  = (float)now / 260.0f;
-        const float wob = sinf(d * 11.0f + ph)        * (2.0f + d * 11.0f)
-                        + sinf(d * 27.0f - ph * 1.7f) * (1.0f + d *  4.5f);
+        const int wob = (isin256((uint16_t)((dy * 114734) / seaH + t260)) * (512 + (dy * 2816) / seaH)     // d x 11, 2 + 11d
+                       + isin256((uint16_t)((dy * 281620) / seaH - t153)) * (256 + (dy * 1152) / seaH))    // d x 27, 1 + 4.5d
+                        / 65536;
 
-        const float rr = (float)(delta < 0 ? -delta : delta) / (float)sunR;
         // Blended over the water colour for this row, not over a flat
         // dark: reflected light sits *in* the surface. Blending the
         // sun's yellows against near-black was turning them olive.
-        const uint8_t a = (uint8_t)(228 - d * 128);
-        const uint16_t c = blend(waterC, sunBandColor(t, rr), a);
+        const uint8_t a = (uint8_t)(228 - (dy * 128) / seaH);
+        const uint16_t c = blend(waterC, sunBandColorAt(delta < 0 ? -delta : delta, sunR), a);
 
-        int x0 = sunCx - half + (int)wob;
+        int x0 = sunCx - half + wob;
         int xs = x0 < 0 ? 0 : x0;
         int xe = x0 + half * 2; if (xe > w) xe = w;
         if (xe > xs) t.drawFastHLine(xs, y, xe - xs, c);
     }
 
+    SP_MARK(4);
     // ---- grid ------------------------------------------------------
     // Rungs only. The converging lines to the vanishing point were
     // fighting the reflection: they cut across the sun's bands and
@@ -9093,6 +9213,14 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         uint8_t fade = (uint8_t)(70 + tt * 185);   // brighter as it nears the viewer
         t.drawFastHLine(0, y, w, blend(BG, gridCol, fade));
     }
+    SP_MARK(5);
+#if SQW_SYNTH_PROFILE
+    if (++s_spN == 32) {
+        Serial.printf("[synth] us/frame: sky+stars %lu  sun %lu  ridge %lu  birds %lu  water %lu  grid %lu  (sun r %d, sky %d, sea %d)\n",
+                      s_sp[0] / 32, s_sp[1] / 32, s_sp[2] / 32, s_sp[3] / 32, s_sp[4] / 32, s_sp[5] / 32, sunR, skyH, seaH);
+        memset(s_sp, 0, sizeof s_sp); s_spN = 0;
+    }
+#endif
 }
 
 void drawGlitchText(TFT_eSPI& t, int y, const char* text,
