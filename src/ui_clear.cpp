@@ -1767,9 +1767,15 @@ static uint16_t lampRainbow(uint16_t deg) {
 // menu icon in both orientations. Portrait's two-line speech bubble overlaps
 // the side of the glass, and that is wanted: the bubble is drawn later and
 // sits on top, like any other bubble over the background.
+// The 320-wide boards draw it double, hard against the left edge (asked for
+// 2026-10-12, on the Marauder V8); the art's outline column is x -1, so ox = s
+// puts that on pixel 0. The watches' 240 stay as they were.
 static void lampPlace(TFT_eSPI& t, int& s, int& ox, int& oy) {
     oy = Theme::TITLE_ICON_BAND_H + 3;
-    if (!Theme::large()) { s = 1; ox = 17; return; }
+    if (!Theme::large()) {
+        if (t.width() >= 320) { s = 2; ox = 2; return; }
+        s = 1; ox = 17; return;
+    }
     s = 3; ox = 3;
 }
 
