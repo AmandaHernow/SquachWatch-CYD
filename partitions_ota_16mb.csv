@@ -22,7 +22,7 @@
 #   0x010000    6 MB  app0
 #   0x610000    6 MB  app1
 #   0xC10000   64 KB  coredump
-#   0xC20000  ~3.9 MB (free)      unassigned, room for a filesystem later
+#   0xC20000  ~3.9 MB (free)      unassigned: the black box (128 KB) at its start
 #
 # Name,   Type, SubType, Offset,    Size,     Flags
 nvs,      data, nvs,     0x9000,    0x5000,
