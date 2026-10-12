@@ -1932,6 +1932,12 @@ static const bool DEFAULT_TOUCH_USABLE = true;
 
 static bool s_calRanThisBoot = false;   // for the RADIO report on the watch
 static void runTouchCalibration() {
+    // The calibration draws straight at the panel. On the boards whose frames
+    // go out from a task of their own, the last one may still be on the wire:
+    // drawing over it scrambled the panel's commands and left it white (the
+    // Marauder V8, from Settings, 2026-10-12). First boot never saw it -- the
+    // task does not exist yet. A no-op everywhere else.
+    FramePush::asyncWait();
     s_calRanThisBoot = true;
     TouchFit::Fit fit;
 #if defined(TWATCH_S3)
