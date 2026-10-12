@@ -4129,7 +4129,7 @@ void setup() {
     // 16-bit — the full 16-bit buffer didn't fit in the available
     // contiguous heap on this board.
     frame.setColorDepth(8);
-#if (defined(SQW_S3) && !defined(FREENOVE_S3_35)) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
+#if (defined(SQW_S3) && !defined(FREENOVE_S3_35) && !defined(FREENOVE_S3_40)) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
     // 57.6 KB fits in internal RAM with room to spare (75 KB at 320x240), and a sprite in
     // PSRAM pushes slower and cannot go by DMA. Keep it inside. (Not the
     // Freenove 3.5": its 154 KB frame goes to PSRAM on purpose, and the QSPI
@@ -8556,6 +8556,8 @@ void loop() {
             info.boardName = "Cardputer ADV LAB";
 #elif defined(FREENOVE_S3_35)
             info.boardName = "freenove-s3-35 BETA";
+#elif defined(FREENOVE_S3_40)
+            info.boardName = "freenove-s3-40";
 #elif defined(CYD35C)
             info.boardName = "cyd35c BETA";
 #elif defined(CYD35)
