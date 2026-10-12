@@ -80,7 +80,8 @@ web flasher offers:
 | `cardputer-adv` | M5Stack Cardputer ADV — not the original Cardputer (BETA) |
 | `twatch-s3` | LilyGo T-Watch S3 / S3 Plus (BETA) |
 
-The rest are not on the flasher: `*-crowd`, `*-flood`,
+The rest are not on the flasher: `freenove-s3-40` is the Freenove
+ESP32-S3 4.0" (FNK0104S), run on one board so far; `*-crowd`, `*-flood`,
 `twatch-s3-loratx` and the `crowpanel7-*` extras are bench builds,
 `cyd35` is the frozen 3.5" build, and `rlphantom` (the Phantom's
 capacitive build) has never run on a real board.

@@ -55,6 +55,10 @@ TFT_eSPI setup for the board, checked against its schematic, and confirmed on
 an FNK0104B. The FNK0104A is the same board without the touch panel; it should
 run with no touch (the probe finds nothing and says so) but has not been tried.
 
+The 4.0" (FNK0104S, `[env:freenove-s3-40]`) is this board with a 320x480
+ST7796 in the ILI9341's place: every pin below is the same, per Freenove's
+sketches, except that its TFT_eSPI setup leaves MISO undefined.
+
 ### TFT (ILI9341) — SPI
 
 | Signal | GPIO |
