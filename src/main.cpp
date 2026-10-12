@@ -1552,15 +1552,34 @@ static void tdeckPowerUp() {
 // turns it off. A 5 kHz PWM on it would step through all sixteen levels three
 // hundred times a second. So the firmware's 0..255 duty becomes 0..16 steps,
 // sent the way LilyGo's setBrightness() sends them.
+//
+// Every change starts from OFF: the pin held low for 3 ms, then the rising
+// edge that means full, then 16 - want short pulses down. Absolute, not
+// relative, so the chip's real state never drifts from the firmware's idea
+// of it. And the pulses sit inside a critical section: a pulse is a low of
+// well under a microsecond, and a task switch between the LOW and the HIGH
+// (the frame push, the LoRa task) held the pin low for milliseconds, which
+// the chip reads as OFF -- the T-Deck went black with the firmware running
+// (2026-10-12). The flash of full brightness before the steps is too short
+// to see.
 static void tdeckBacklight(uint8_t duty) {
-    static uint8_t level = 16;           // setup() drove the pin HIGH: full
-    const uint8_t want = duty == 0 ? 0 : (uint8_t)(1 + ((uint32_t)duty * 15 + 127) / 255);
+    static int level = -1;               // what was last asked for; -1 = never
+    const int want = duty == 0 ? 0 : 1 + (int)(((uint32_t)duty * 15 + 127) / 255);
     if (want == level) return;
-    if (want == 0) { digitalWrite(BL_PIN_S3, LOW); delay(3); level = 0; return; }
-    if (level == 0) { digitalWrite(BL_PIN_S3, HIGH); level = 16; delayMicroseconds(30); }
-    const int steps = (16 + (16 - want) - (16 - level)) % 16;   // down from here to there, wrapping
-    for (int i = 0; i < steps; i++) { digitalWrite(BL_PIN_S3, LOW); digitalWrite(BL_PIN_S3, HIGH); }
     level = want;
+    digitalWrite(BL_PIN_S3, LOW);
+    delay(3);                             // long enough low: off, whatever it was doing
+    if (want == 0) return;
+    portDISABLE_INTERRUPTS();
+    digitalWrite(BL_PIN_S3, HIGH);        // on, at full
+    delayMicroseconds(30);
+    for (int i = 0; i < 16 - want; i++) {
+        digitalWrite(BL_PIN_S3, LOW);
+        delayMicroseconds(1);
+        digitalWrite(BL_PIN_S3, HIGH);
+        delayMicroseconds(1);
+    }
+    portENABLE_INTERRUPTS();
 }
 // The keyboard: LilyGo's helper chip (an ESP32-C3 running their firmware) on
 // the touch chip's I2C bus at 0x55. Asked, it answers one byte: the character
