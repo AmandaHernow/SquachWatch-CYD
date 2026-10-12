@@ -400,6 +400,20 @@ namespace Squachy {
     // words on top, so ours never stands over them.
     void deferBubble(bool on);
     void drawDeferredBubble(TFT_eSPI& t, uint32_t now);
+    // How tall his speech bubble comes out for `text` on this panel, wrapped
+    // as drawn: for a screen that has to leave room for it (the boot splash).
+    int bubbleHeight(TFT_eSPI& t, const char* text);
+    // While on, his bubble keeps the 2.8"'s text size on the big panels too.
+    // Set around one draw and cleared after, like the previews.
+    void setBubbleSmall(bool on);
+    // tick()'s own speech bubble drawn again, unchanged, on top of whatever
+    // the caller drew after tick(): the visit draws the visitor after our
+    // Squachy, and he used to stand over our Squachy's words.
+    void redrawOwnBubble(TFT_eSPI& t, uint32_t now);
+    // The speech bubble the last drawWaving() call drew (a visitor's), so
+    // the visit can keep its message button out from under it. False when
+    // that call drew none.
+    bool cameoBubble(int& x, int& y, int& w, int& h);
 
 #if SQUACH_MESH
     // Which beat of a visit a line is wanted for. The pools live in
@@ -429,6 +443,9 @@ namespace Squachy {
     // the airwaves while there is somebody standing next to him.
     void setVisiting(bool v);
     bool visiting();
+    // Whether he is dancing right now (a squad DANCE emote, party mode, a
+    // milestone): the yeti pet joins in when he is.
+    bool dancing();
 
     // Set around tick() while other Squachys share the scene (a visit, a
     // crowd). His size then ignores what he is wearing: no shrinking so a

@@ -1538,6 +1538,11 @@ static const uint32_t MSG_SHOW_MS = 8000;
 
 static bool    s_msgGuestOn = false;      // a visitor is on screen this frame
 static int     s_msgGx = 0, s_msgHeadTop = 0;
+// The visitor's own speech bubble this frame, if he is talking: the message
+// button keeps out from under it.
+static bool    s_msgGbOn = false;
+static int     s_msgGbX = 0, s_msgGbY = 0, s_msgGbW = 0, s_msgGbH = 0;
+static float   s_msgGs = 1.0f;            // the visitor's scale this frame
 static bool    s_bubbleOn = false;        // the tap target, filled by the draw
 static int16_t s_bubX = 0, s_bubY = 0, s_bubW = 0, s_bubH = 0;
 
@@ -2382,10 +2387,25 @@ static void drawMessageUi(TFT_eSPI& t, uint32_t now, int titleBottom, int squach
     // Only with somebody around -- or something unread from somebody who was.
     if (s_msgGuestOn || (m.unread && !tut)) {
         int ix = gx + 26;
+        // Beside his head rather than on it on the big panels, where he is
+        // twice the size the 26 was measured against and it sat on his
+        // sunglasses. The other boards keep their 26 exactly.
+        if (Theme::large() && s_msgGuestOn) {
+            const int beside = (int)(29.0f * s_msgGs);
+            if (beside > 26) ix = gx + beside;
+        }
         if (ix + MSG_ICON_W > w - 4) ix = w - 4 - MSG_ICON_W;
         // Dropped clear of the red bubble while one is up: at the larger
         // size the two overlapped at the corner and, both red, read as one.
-        drawMessageIcon(t, ix, head + 4 + (showing ? 8 : 0),
+        int iy = head + 4 + (showing ? 8 : 0);
+        // And clear of his own speech bubble. On the 3.5" his lines wrap to
+        // two or three double-size rows that hang down past his head, right
+        // through where the button sits (2026-10-12): drop it under them.
+        if (s_msgGuestOn && s_msgGbOn &&
+            ix < s_msgGbX + s_msgGbW && ix + MSG_ICON_W > s_msgGbX &&
+            iy < s_msgGbY + s_msgGbH + 2 && iy + MSG_ICON_H + 6 > s_msgGbY)
+            iy = s_msgGbY + s_msgGbH + 4;
+        drawMessageIcon(t, ix, iy,
                         tut ? showing : m.unread, tut ? false : MeshTalk::sending(now), now);
     }
 }
@@ -3122,6 +3142,7 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                         // And his bubble says so.
                         true,
                         guestPose(now));
+    s_msgGbOn = Squachy::cameoBubble(s_msgGbX, s_msgGbY, s_msgGbW, s_msgGbH);
     Squachy::setNameTag(nullptr);
     Squachy::setHeadset(false);
     Squachy::setAuraPreview(-1);
@@ -3143,11 +3164,16 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
     }
     drawPieceFx(t, now, w / 2 - gap + hostLeanPx(), gx,
                 squachyBottom - (int)(58.0f * gs), gs);
+    // Our Squachy's words once more, on top: tick() drew them before the
+    // visitor existed in this frame, and a visitor walking in, leaning in or
+    // standing close on a big panel stood right over them.
+    Squachy::redrawOwnBubble(t, now);
 
     // Where he is this frame, for the message bubble and its button.
     s_msgGuestOn = true;
     s_msgGx      = gx;
     s_msgHeadTop = squachyBottom - (int)(58.0f * gs);
+    s_msgGs      = gs;
 }
 
 void uiClearVisitTick(uint32_t now) {

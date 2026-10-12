@@ -2195,10 +2195,18 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
 // the bubble spans the screen and would sit across the message. He keeps
 // moving; only the words wait.
 static bool s_bubbleHeld = false;
+// The 2.8"'s bubble size on a big panel too, for a screen that would rather
+// give the room to him (the boot splash). See setBubbleSmall().
+static bool s_bubbleSmall = false;
+void setBubbleSmall(bool on) { s_bubbleSmall = on; }
 void holdBubble(bool held) { s_bubbleHeld = held; }
 
 // A cameo's bubble, held back to be drawn on top of whoever comes after it.
 static bool        s_bubbleDefer = false;
+static bool        s_cameoBub = false;                     // drawWaving()'s last bubble, for cameoBubble()
+static int         s_cameoBX = 0, s_cameoBY = 0, s_cameoBW = 0, s_cameoBH = 0;
+static const char* s_ownLine = nullptr;                    // tick()'s bubble this frame, for redrawOwnBubble()
+static int         s_ownCx = 0, s_ownTopY = 0, s_ownTail = 0;
 static const char* s_deferLine   = nullptr;
 static int         s_deferCx = 0, s_deferY = 0, s_deferTail = 0;
 
@@ -2217,7 +2225,7 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
     // Twice the size on the 3.5" boards, where the 2.8"'s 16 rows read as
     // small print. Only his own bubble: the other screens that share the
     // font are laid out around 16 rows.
-    const int k = Theme::large() ? 2 : 1;
+    const int k = (Theme::large() && !s_bubbleSmall) ? 2 : 1;
     t.setTextSize(k);
     t.setTextWrap(false);
     int screenW = t.width();
@@ -3147,6 +3155,7 @@ void setSizeBoost(float k) { s_sizeBoost = k > 0.0f ? k : 1.0f; }
 static float s_companyShare = 0.5f;
 void setCompanyShare(float share) { s_companyShare = share > 0.0f ? share : 0.5f; }
 bool visiting() { return s_visiting; }
+bool dancing() { return mood == Mood::DANCE; }
 void setListening(bool v) { s_listening = v; }
 
 static const char* const MEET_HOST_LINES[] = {
@@ -7621,6 +7630,7 @@ void drawWaving(TFT_eSPI& t, int cx, int baseY, uint32_t now, float scale, const
     // This cameo is placed by callers that have already reserved room, so
     // there is no region to clamp against.
     s_cameo = true;
+    s_cameoBub = false;   // set again below if this call draws a bubble
     s_topLimit = -10000;
     // The cameo has no mood machine driving the pose channels, so clear
     // them rather than letting whatever CLEAR left behind leak into the
@@ -7740,13 +7750,53 @@ void drawWaving(TFT_eSPI& t, int cx, int baseY, uint32_t now, float scale, const
             s_deferLine = line; s_deferCx = cx; s_deferY = headTopY - bubbleGap;
             s_deferTail = bubbleTail ? bodyCx : NO_TAIL;
         } else {
+            lastBubbleW = 0;
             drawBubble(t, cx, headTopY - bubbleGap, line, now, false, bubbleTail ? bodyCx : NO_TAIL);
+            if (lastBubbleW > 0) {
+                s_cameoBub = true;
+                s_cameoBX = lastBubbleX; s_cameoBY = lastBubbleY; s_cameoBW = lastBubbleW; s_cameoBH = lastBubbleH;
+            }
         }
     }
     s_cameo = false;
 }
 
+bool cameoBubble(int& x, int& y, int& w, int& h) {
+    if (!s_cameoBub) return false;
+    x = s_cameoBX; y = s_cameoBY; w = s_cameoBW; h = s_cameoBH;
+    return true;
+}
+
 void deferBubble(bool on) { s_bubbleDefer = on; }
+// How tall his bubble comes out for `text` on this panel, without drawing
+// it: the same font, size and wrap width drawBubbleIn() uses.
+int bubbleHeight(TFT_eSPI& t, const char* text) {
+    Theme::bubbleFontOn(t);
+    const int k = (Theme::large() && !s_bubbleSmall) ? 2 : 1;
+    t.setTextSize(k);
+    t.setTextWrap(false);
+    const int screenW = t.width();
+    int maxW = screenW - 16;
+    if (k > 1 && maxW > screenW - 2 * CORNER_W - 2) maxW = screenW - 2 * CORNER_W - 2;
+    int h;
+    if (t.textWidth(text) <= maxW - 10) {
+        h = Theme::bubbleTextH() * k + 6;
+    } else {
+        char lines[BUBBLE_MAX_LINES][48];
+        const uint8_t n = Theme::wrapText(t, text, maxW - 10, lines, k > 1 ? BUBBLE_MAX_LINES : 2);
+        h = 6 + (int)n * (Theme::bubbleTextH() * k + 1);
+    }
+    Theme::bubbleFontOff(t);
+    t.setTextSize(1);
+    return h;
+}
+// tick()'s own bubble again, exactly as it drew it this frame (same text,
+// place and moment, so the same pixels), for a caller that has drawn
+// somebody over it since.
+void redrawOwnBubble(TFT_eSPI& t, uint32_t now) {
+    if (!s_ownLine) return;
+    drawBubble(t, s_ownCx, s_ownTopY, s_ownLine, now, true, s_ownTail);
+}
 void drawDeferredBubble(TFT_eSPI& t, uint32_t now) {
     if (!s_deferLine) return;
     drawBubble(t, s_deferCx, s_deferY, s_deferLine, now, false, s_deferTail);
@@ -8882,6 +8932,10 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
         else                 drawBubble(t, cx, topY, bubbleText, now, true,
                                         s_visiting ? bodyCx : NO_TAIL);
     }
+    // Kept for redrawOwnBubble(): a visit draws the visitor after this, and
+    // he stood on top of these words (seen on the 3.5", 2026-10-11).
+    s_ownLine = (showBubble && !s_onboardActive) ? bubbleText : nullptr;
+    s_ownCx = cx; s_ownTopY = topY; s_ownTail = s_visiting ? bodyCx : NO_TAIL;
     // Only what this call itself drew. A bubble that is held, or still
     // popping in, returns before recording anything, and the rectangle
     // left in lastBubble* is then somebody else's.
