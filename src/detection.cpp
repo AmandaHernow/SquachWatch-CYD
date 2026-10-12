@@ -490,18 +490,12 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
                             break;
                         }
                     }
-                    // Raven's services run 0x3100-0x3500, not just the five
-                    // round ones above: 0x3101 and 0x3102 are the ones that
-                    // hand out its GPS position (Flock-You, issue #15).
-                    // getValue() is the 16-bit value's own bytes, little-endian.
-                    if (det.type == DetectionType::UNKNOWN && u.getValue()) {
-                        const uint8_t* p = u.getValue();
-                        const uint16_t v = (uint16_t)(p[0] | (p[1] << 8));
-                        if (v >= 0x3100 && v <= 0x3500) {
-                            det.type = DetectionType::RAVEN;
-                            label    = uuidName(0x3100);
-                        }
-                    }
+                    // Raven is the five round services above and nothing in
+                    // between. Matching every value from 0x3100 to 0x3500 --
+                    // over a thousand numbers nobody has registered, on the
+                    // strength of 0x3101/0x3102, which the Raven write-ups
+                    // list inside its GPS service rather than in its advert
+                    // -- named an NVIDIA Shield a gunshot detector (issue #41).
                     if (det.type != DetectionType::UNKNOWN) break;
                 } else if (u.bitSize() == 128) {
                     // The Flock accessory service, from the GATT definition

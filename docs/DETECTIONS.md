@@ -148,12 +148,13 @@ OUIs (`20:13:00`, `98:D3:00`, `00:1A:7D`) also match, graded Low.
 
 ## Raven gunshot detector — `RAVEN` — **Medium confidence**
 
-**Why it works:** Raven devices advertise custom service UUIDs in
-the `0x3100`–`0x3500` range (proprietary, not in the Bluetooth
-SIG assigned range). Until v1.24.0 only the five round values
-(`0x3100`, `0x3200` ... `0x3500`) matched; now the whole range does,
-including `0x3101` and `0x3102`, the two that hand out its GPS
-position.
+**Why it works:** Raven devices advertise five custom service UUIDs,
+`0x3100`, `0x3200`, `0x3300`, `0x3400` and `0x3500` (proprietary, not in
+the Bluetooth SIG assigned range), and only those five match. From
+v1.24.0 to v1.35.0 every value from `0x3100` to `0x3500` matched, on the
+strength of `0x3101` and `0x3102`, the two that hand out a Raven's GPS
+position. Those sit inside its GPS service rather than in its advert,
+and the wide range named an NVIDIA Shield a Raven (issue #41).
 
 **Source:** [Flock You documentation](https://github.com/colonelpanichacks/flock-you/wiki/Detection-Datasets#raven).
 
