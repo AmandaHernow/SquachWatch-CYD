@@ -34,10 +34,21 @@ namespace Sound {
 
 #if defined(FREENOVE_S3_35)
 static const int PIN_MCK = 17, PIN_BCK = 18, PIN_WS = 21, PIN_DOUT = 15;
+static const int PIN_AMP = 1;
+#elif defined(TDECK_PLUS)
+// The T-Deck Plus: a MAX98357A class-D amp straight on I2S (LilyGo's
+// BOARD_I2S_BCK 7 / WS 5 / DOUT 6). No codec to set up, no master clock, and
+// no enable pin of its own -- it sleeps when the clocks stop.
+static const int PIN_MCK = -1, PIN_BCK = 7, PIN_WS = 5, PIN_DOUT = 6;
+static const int PIN_AMP = -1;
+#define SOUND_NO_CODEC 1
 #else
 static const int PIN_MCK = 4,  PIN_BCK = 5,  PIN_WS = 7,  PIN_DOUT = 8;
+static const int PIN_AMP = 1;
 #endif
-static const int        PIN_AMP = 1;
+#ifndef SOUND_NO_CODEC
+#define SOUND_NO_CODEC 0
+#endif
 static const uint8_t    CODEC   = 0x18;
 static const uint32_t   RATE    = 16000;      // plenty for tones under 4 kHz
 static const i2s_port_t PORT    = I2S_NUM_0;
@@ -120,7 +131,7 @@ static bool codecInit() {
 }
 
 // ---- the amplifier ---------------------------------------------------------
-static void amp(bool on) { digitalWrite(PIN_AMP, (on == s_ampLow) ? LOW : HIGH); }
+static void amp(bool on) { if (PIN_AMP >= 0) digitalWrite(PIN_AMP, (on == s_ampLow) ? LOW : HIGH); }
 
 // ---- rendering -------------------------------------------------------------
 // Per-chunk synthesis into a stereo 16-bit buffer, the same sample in both
@@ -212,10 +223,12 @@ static void soundTask(void*) {
 
 // ---- the API ---------------------------------------------------------------
 void begin() {
-    pinMode(PIN_AMP, OUTPUT);
+    if (PIN_AMP >= 0) pinMode(PIN_AMP, OUTPUT);
     amp(false);
+#if !SOUND_NO_CODEC
     Wire.beginTransmission(CODEC);
     if (Wire.endTransmission() != 0) { Serial.println("[sound] ES8311 did not answer; no speaker"); return; }
+#endif
 
     i2s_config_t cfg = {};
     cfg.mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
@@ -233,7 +246,7 @@ void begin() {
     cfg.bits_per_chan        = I2S_BITS_PER_CHAN_16BIT;
     if (i2s_driver_install(PORT, &cfg, 0, nullptr) != ESP_OK) { Serial.println("[sound] I2S driver refused"); return; }
     i2s_pin_config_t pins = {};
-    pins.mck_io_num   = PIN_MCK;
+    pins.mck_io_num   = PIN_MCK >= 0 ? PIN_MCK : I2S_PIN_NO_CHANGE;
     pins.bck_io_num   = PIN_BCK;
     pins.ws_io_num    = PIN_WS;
     pins.data_out_num = PIN_DOUT;
@@ -242,6 +255,13 @@ void begin() {
     i2s_zero_dma_buffer(PORT);
     // The codec's power-up wants its clocks running; the driver starts them
     // on install. Set the codec up, then park the clocks until a sound.
+#if SOUND_NO_CODEC
+    i2s_stop(PORT);
+    s_q = xQueueCreate(4, sizeof(uint8_t));
+    xTaskCreatePinnedToCore(soundTask, "sound", 3072, nullptr, 2, &s_task, 1);
+    s_ok = s_q && s_task;
+    Serial.printf("[sound] I2S amp ready: BCK %d WS %d DOUT %d%s\n", PIN_BCK, PIN_WS, PIN_DOUT, s_ok ? "" : " -- task failed");
+#else
     const bool ok = codecInit();
     const uint8_t id1 = rd(0xFD), id2 = rd(0xFE);
     i2s_stop(PORT);
@@ -251,6 +271,7 @@ void begin() {
     s_ok = s_q && s_task;
     Serial.printf("[sound] ES8311 id %02X%02X ready: MCK %d BCK %d WS %d DOUT %d, amp on GPIO%d%s\n",
                   id1, id2, PIN_MCK, PIN_BCK, PIN_WS, PIN_DOUT, PIN_AMP, s_ok ? "" : " -- task failed");
+#endif
 }
 
 void play(Id id, bool sample) {

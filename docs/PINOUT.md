@@ -181,6 +181,30 @@ found on the board (2026-10-12); the rest are from Marauder's `configs.h`.
 Not used: 27 (an unfitted WS2812 in Marauder's build, and a strapping pin),
 15-22 (flash and PSRAM), 11/12 (the console), 13 (GPS RX, nothing to send).
 
+## LilyGo T-Deck Plus — `[env:tdeck-plus]`
+
+An ESP32-S3FN16R8 (16 MB flash, 8 MB PSRAM) handheld with a keyboard. Pins
+from LilyGo's `utilities.h` (T-Deck repo, examples/UnitTest), confirmed on a
+board 2026-10-12. The console is the native USB port.
+
+| Part | Pins |
+|---|---|
+| SPI bus (screen, SD, LoRa) | SCK 40, MOSI 41, MISO 38 |
+| ST7789 2.8" 240×320 | CS 12, DC 11, no reset line; inversion on; 40 MHz |
+| Backlight | GPIO 42, a 16-step driver chip: HIGH is full, each pulse steps it down (not PWM) |
+| GT911 capacitive touch | I2C SDA 18, SCL 8, INT 16, address 0x5D |
+| Keyboard | the same I2C, address 0x55: one character per read, 0x0D enter, 0x08 backspace. Alt+B toggles its own backlight |
+| SD card (SPI) | CS 39 |
+| Speaker | MAX98357A on I2S: BCK 7, WS 5, DOUT 6 (no codec, no enable pin) |
+| GPS (MIA-M10Q) | its TX into GPIO 44, 9600 baud, on Serial1 |
+| Battery | GPIO 4 through a 1:2 divider |
+| Power enable | GPIO 10, HIGH or nothing past the chip has power on battery |
+| Trackball | GPIO 3, 2, 15, 1; centre button GPIO 0 (not used yet) |
+| SX1262 LoRa | CS 9, DIO1 45, RST 17, BUSY 13, on the display's bus (not used yet) |
+
+Not used: 43 (GPS RX), 46 (keyboard INT, polled instead), 48/21/47/14 (the
+ES7210 microphones), 19/20 (USB).
+
 ## Sources
 
 - [witnessmenow/ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display) (MIT)

@@ -7,7 +7,7 @@
 // The speaker's two rows: on the boards with one, and in the emulator, where
 // they are listed only with SQUACHSIM_SPEAKER set (for the release clip) so
 // the web emulator never offers a sound it cannot make.
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || !defined(ESP32)
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS) || !defined(ESP32)
 #define SQW_SOUND_ROWS 1
 #else
 #define SQW_SOUND_ROWS 0
@@ -84,7 +84,7 @@ enum class SettingsRow : uint8_t {
 #if SQW_WIFI_5G
     WIFI_BANDS,      // a chip with 5 GHz only (the NM-CYD-C5): 2.4+5, or 2.4
 #endif
-    BOARD_BATTERY,   // the Freenove S3s and the Marauder V8: the cell, on the SYSTEM page
+    BOARD_BATTERY,   // the Freenove S3s, the Marauder V8 and the T-Deck Plus: the cell, on the SYSTEM page
     CHARGE_MODE,     // the CYD boards: radios and screen off so a battery charges faster
     LAST_RUN,        // the CYD boards: how long the previous boot ran, on the SYSTEM page
     PRIVACY,         // PRIVACY MODE: addresses and names masked on screen, on the SYSTEM page

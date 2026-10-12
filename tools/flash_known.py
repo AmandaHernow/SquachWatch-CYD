@@ -63,6 +63,11 @@ BOARDS = {
     # was read off first (sim/out/marauder_v8/marauder_v8_factory.bin).
     # Bring-up began 2026-10-12.
     "3c:dc:75:81:0a:7c": ("marauder-v8", "Marauder V8, ESP32-C5 behind a CP210x"),
+    # LilyGo T-Deck Plus: ESP32-S3FN16R8, 16 MB flash, 8 MB PSRAM, 2.8in ST7789,
+    # GT911 touch, keyboard, trackball, SX1262, GPS. Native USB with its MAC as
+    # the serial number. Its factory image was read off first
+    # (sim/out/tdeck_plus/tdeck_plus_factory.bin). Bring-up began 2026-10-12.
+    "30:ed:a0:a5:c3:f8": ("tdeck-plus",  "LilyGo T-Deck Plus, ESP32-S3, native USB"),
     # 88:57:21:2e:e6:e0 runs SquachEmit, not this firmware. It is the only
     # CAPACITIVE 2.8in; to test capacitive touch, list it here as cyd-fast
     # for the test and comment it out again after (done 2026-09-21).

@@ -754,6 +754,7 @@
       <option value="./manifest-freenove-s3.json">Freenove ESP32-S3 2.8&quot; &mdash; FNK0104 (BETA)</option>
       <option value="./manifest-freenove-s3-35.json">Freenove ESP32-S3 3.5&quot; &mdash; FNK0104N (BETA)</option>
       <option value="./manifest-crowpanel7.json">Elecrow CrowPanel 7&quot; &mdash; CrowPanel Advance 7.0 (BETA)</option>
+      <option value="./manifest-tdeck-plus.json" data-ocnote="The T-Deck's screen runs at 40MHz; there is no other build.">LilyGo T-Deck Plus &mdash; ESP32-S3, keyboard + GPS (BETA)</option>
       </optgroup>
       <optgroup label="ESP32-C5 BOARDS">
       <option value="./manifest-nm-cyd-c5.json" data-ocnote="The C5 runs its panel at its own full speed; there is no slower build.">RockBase NM-CYD-C5 2.8&quot; &mdash; ESP32-C5, RISC-V (BETA)</option>
@@ -1530,7 +1531,7 @@
          './manifest-lab-crowpanel7.json', './manifest-lab-cyd32c.json',
          './manifest-lab-cyd35-fast.json', './manifest-lab-nm-cyd-c5.json', './manifest-lab-marauder-v8.json',
          './manifest-lab-cyd35c-fast.json', './manifest-lab-sticks3.json',
-         './manifest-lab-cardputer-adv.json'].forEach(function (path) {
+         './manifest-lab-cardputer-adv.json', './manifest-lab-tdeck-plus.json'].forEach(function (path) {
           fetch(path, { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (m) {
@@ -1695,6 +1696,7 @@
       { re: /FNK0?104/,             v: './manifest-freenove-s3.json', say: 'That’s the Freenove ESP32-S3 2.8" (BETA). Selected below.' },
       { re: /CROWPANEL|CROW/,       v: './manifest-crowpanel7.json',  say: 'That’s the CrowPanel 7" (BETA). Selected below.' },
       { re: /T-?WATCH/,             v: './manifest-twatch-s3.json',   say: 'That’s a T-Watch S3 (BETA). Selected below.' },
+      { re: /T-?DECK/,              v: './manifest-tdeck-plus.json',  say: 'That’s the LilyGo T-Deck Plus (BETA). Selected below.' },
       { re: /STICK-?S3|K150/,       v: './manifest-sticks3.json',     say: 'That’s the M5Stack StickS3 (BETA). Selected below.' },
       { re: /CARDPUTER.*ADV/,       v: './manifest-cardputer-adv.json', say: 'That’s the Cardputer ADV (BETA). Selected below.' },
       { re: /CARDPUTER/,            v: null,                          say: 'Only the Cardputer ADV is on the flasher. The original Cardputer has a different keyboard and is not supported yet.' }

@@ -27,7 +27,7 @@
 #include "st77922_qspi.h"
 #include "st77922_touch.h"
 #endif
-#if defined(CYD32C) || defined(CYD35C)
+#if defined(CYD32C) || defined(CYD35C) || defined(TDECK_PLUS)
 #include "gt911_touch.h"
 #endif
 // The 3.5" comes resistive (ESP32-3248S035R: touch on the display's own bus)
@@ -470,6 +470,8 @@ static void drawCrashCard(TFT_eSPI& t) {
 #define BL_PIN_S3   38   // the StickS3's and the Cardputer ADV's
 #elif defined(FREENOVE_S3_35)
 #define BL_PIN_S3   41   // the Freenove 3.5"'s, through a BSS138 (HIGH is on)
+#elif defined(TDECK_PLUS)
+#define BL_PIN_S3   42   // the T-Deck's 16-step driver chip: HIGH is full, pulses step it (tdeckBacklight)
 #else
 #define BL_PIN_S3   45   // the T-Watch S3's and the Freenove S3's, both
 #endif
@@ -506,6 +508,10 @@ constexpr bool PANEL_NEEDS_INVERSION = true;
 #elif defined(FREENOVE_S3)
 // Freenove's own setup for the S3 2.8" (FNK0104AB) turns inversion on, and
 // confirmed on an FNK0104B 2026-09-25: colours right with INVERT untouched.
+constexpr bool PANEL_NEEDS_INVERSION = true;
+#elif defined(TDECK_PLUS)
+// LilyGo's T-Deck setup turns inversion on for its ST7789. UNCONFIRMED by
+// eye until the board is looked at; INVERT in Settings flips it if wrong.
 constexpr bool PANEL_NEEDS_INVERSION = true;
 #elif defined(CYD32C)
 // The same IPS ST7789 as the Freenove 3.2". UNCONFIRMED until looked at;
@@ -1502,7 +1508,7 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
 #if defined(SQW_SMALL)
     (void)a; (void)b;
     return false;   // no touch panel at all: the buttons drive it
-#elif defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C)
+#elif defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C) || defined(TDECK_PLUS)
     // The GT911 already reports panel pixels; TouchFit divides by the scale,
     // so nothing else differs.
     uint16_t x, y;
@@ -1523,6 +1529,63 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
 #endif
 #endif
 }
+
+#if defined(TDECK_PLUS)
+// ---- T-Deck Plus: power rail, bus tidying, and the stepped backlight ------
+// GPIO10 is the board's power enable: on battery nothing past the S3 has
+// power until it is HIGH (on USB it happens to be fed anyway). The SD slot
+// and the SX1262 share the display's SPI bus, so their chip selects are
+// parked HIGH before TFT_eSPI's first byte, and MISO gets a pull-up so an
+// idle bus reads quiet. From LilyGo's UnitTest sketch.
+static const int TDECK_POWERON = 10, TDECK_SD_CS = 39, TDECK_LORA_CS = 9, TDECK_MISO = 38;
+static void tdeckPowerUp() {
+    pinMode(TDECK_POWERON, OUTPUT); digitalWrite(TDECK_POWERON, HIGH);
+    pinMode(TDECK_SD_CS, OUTPUT);   digitalWrite(TDECK_SD_CS, HIGH);
+    pinMode(TDECK_LORA_CS, OUTPUT); digitalWrite(TDECK_LORA_CS, HIGH);
+    pinMode(TFT_CS, OUTPUT);        digitalWrite(TFT_CS, HIGH);
+    pinMode(TDECK_MISO, INPUT_PULLUP);
+    delay(50);   // the rail, the panel and the touch chip come up
+}
+// The backlight is not a PWM pin. GPIO42 drives a 16-step LED driver that
+// counts pulses: a rising edge from off is full brightness, each short
+// low-high pulse after that steps it down one level, and holding it low
+// turns it off. A 5 kHz PWM on it would step through all sixteen levels three
+// hundred times a second. So the firmware's 0..255 duty becomes 0..16 steps,
+// sent the way LilyGo's setBrightness() sends them.
+static void tdeckBacklight(uint8_t duty) {
+    static uint8_t level = 16;           // setup() drove the pin HIGH: full
+    const uint8_t want = duty == 0 ? 0 : (uint8_t)(1 + ((uint32_t)duty * 15 + 127) / 255);
+    if (want == level) return;
+    if (want == 0) { digitalWrite(BL_PIN_S3, LOW); delay(3); level = 0; return; }
+    if (level == 0) { digitalWrite(BL_PIN_S3, HIGH); level = 16; delayMicroseconds(30); }
+    const int steps = (16 + (16 - want) - (16 - level)) % 16;   // down from here to there, wrapping
+    for (int i = 0; i < steps; i++) { digitalWrite(BL_PIN_S3, LOW); digitalWrite(BL_PIN_S3, HIGH); }
+    level = want;
+}
+// The keyboard: LilyGo's helper chip (an ESP32-C3 running their firmware) on
+// the touch chip's I2C bus at 0x55. Asked, it answers one byte: the character
+// of the key pressed since last time, 0x0D for enter, 0x08 for backspace,
+// 0x00 for nothing. Shift and the symbol key are applied inside it, and alt+B
+// toggles its own backlight without telling us. Polled every 25 ms: it holds
+// one key, and the loop comes round faster than fingers do. The key goes to
+// whichever text screen is up; anywhere else it is dropped.
+static const uint8_t TDECK_KBD = 0x55;
+static void tdeckKeysTick(uint32_t now) {
+    static uint32_t at = 0;
+    if (now - at < 25) return;
+    at = now;
+    Wire.beginTransmission(TDECK_KBD);
+    if (Wire.endTransmission() != 0) return;
+    if (Wire.requestFrom((int)TDECK_KBD, 1) != 1) return;
+    const uint8_t k = (uint8_t)Wire.read();
+    if (k == 0 || k == 0x0C) return;             // nothing, or alt+C (its own)
+    const char c = k == 0x0D ? '\n' : k == 0x08 ? '\b' : (char)k;
+    if (state == AppState::WIFI_PASS) uiWifiPassKey(c, now);
+#if SQUACH_MESH
+    else if (state == AppState::PHONE) uiPhoneKey(c);
+#endif
+}
+#endif
 
 // Set by the power-saver timer in loop(). Kept out of Settings on purpose:
 // it is a live state, not a preference, and it must never be persisted --
@@ -1630,6 +1693,8 @@ static void applyBrightness() {
     // writing to GPIO 0, 1 and 2 -- and on this board GPIO1 is the touch chip
     // select. Three shots in the foot from what looks like dead code.
     ledcWrite(TFT_BL, duty);
+#elif defined(TDECK_PLUS)
+    tdeckBacklight(duty);   // a stepped driver chip, not a PWM pin
 #else
 #if SQW_BOOT_BTN
     if (s_crownDark && s_screenDimmed) duty = 0;   // the button turns it OFF, whatever DIM LEVEL says
@@ -2914,12 +2979,16 @@ static void sticksPowerUp() {
 }
 #endif
 
-#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS)
 // The Freenove S3's battery: a 1-cell LiPo on its JST, a TP4054 charging it
 // from USB, and a 200K/200K divider from the cell to GPIO9 (ADC1, so WiFi does
-// not take it away) -- GPIO8 on the 3.5", per Freenove's battery sketch.
+// not take it away) -- GPIO8 on the 3.5", per Freenove's battery sketch. The
+// T-Deck Plus is the same shape: its 2000 mAh cell through a 1:2 divider on
+// GPIO4 (LilyGo's BOARD_BAT_ADC), and a charger whose LED is the only status.
 #if defined(FREENOVE_S3_35)
 #define BOARD_BAT_ADC 8
+#elif defined(TDECK_PLUS)
+#define BOARD_BAT_ADC 4
 #else
 #define BOARD_BAT_ADC 9
 #endif
@@ -3943,6 +4012,9 @@ void setup() {
 #if defined(STICKS3)
     sticksPowerUp();
 #endif
+#if defined(TDECK_PLUS)
+    tdeckPowerUp();
+#endif
 #if defined(CYD35) || defined(NM_CYD_C5)
     // On the NM-CYD-C5 this answers a specific open question rather than a
     // general one. Its bootloader prints
@@ -4104,6 +4176,9 @@ void setup() {
 #if defined(CROWPANEL7)
     // No LEDC at all: the backlight is an I2C command byte. Claiming channels
     // here would only take them away from something that has a pin.
+#elif defined(TDECK_PLUS)
+    // No LEDC: GPIO42 is a pulse-counting 16-step driver, and a PWM on it
+    // would walk the brightness round and round. tdeckBacklight() steps it.
 #elif defined(SQW_S3)
     // One backlight, GPIO45, on the first channel. The CYD pins below are
     // flash/PSRAM lines and the power chip's interrupt on an S3.
@@ -4166,6 +4241,8 @@ void setup() {
         // browned the Phantom out into a second boot.
 #if defined(CROWPANEL7)
         CrowBL::set(24);
+#elif defined(TDECK_PLUS)
+        tdeckBacklight(24);
 #else
         ledcWrite(BL_CH_ORIG, 24);
         ledcWrite(BL_CH_CAP,  24);
@@ -4331,6 +4408,16 @@ void setup() {
     usingCapTouch = Gt911::begin();
     Serial.println(usingCapTouch ? "GT911 capacitive touch answered."
                                  : "GT911 did not answer; no touch.");
+#elif defined(TDECK_PLUS)
+    // The T-Deck's GT911, on I2C SDA 18 / SCL 8 (the keyboard's bus too), INT
+    // on 16, no reset line. Raw panel pixels in the panel's own frame, so the
+    // five-target calibration maps them like the capacitive CYDs'.
+    usingCapTouch = Gt911::begin();
+    Serial.println(usingCapTouch ? "T-Deck Plus -- GT911 capacitive touch answered."
+                                 : "T-Deck Plus -- GT911 did not answer; no touch.");
+    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
+    uiClearSetBatterySource(boardBatteryState);
+    Sound::begin();                       // the I2S amp; no codec to find
 #elif defined(TWATCH_S3)
     // The T-Watch's FT6336, on I2C SDA 39 / SCL 40 at 0x38. No reset line;
     // the AXP2101 powers it (ALDO3) in twatchPowerUp(), before this runs.
@@ -4431,7 +4518,7 @@ void setup() {
         uint32_t windowStart = millis();
         while (millis() - windowStart < 1200) {
             int16_t a, b;
-#if defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C) || defined(SQW_SMALL) || defined(FREENOVE_S3_35)
+#if defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C) || defined(SQW_SMALL) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS)
             // The GT911 (and the ST77922's touch) is neither of the two
             // below; the two-way dispatch polled a capacitive controller that
             // is not on this bus, a hundred bus errors a boot.
@@ -4531,6 +4618,8 @@ void setup() {
     // is the one large load that nobody misses for a second at boot.
 #if defined(CROWPANEL7)
     CrowBL::set(24);
+#elif defined(TDECK_PLUS)
+    tdeckBacklight(24);
 #else
     ledcWrite(BL_CH_ORIG, 24);
     ledcWrite(BL_CH_CAP,  24);
@@ -5561,6 +5650,9 @@ void loop() {
 #if defined(ESP32) && !defined(TWATCH_S3)
 #if SQW_BOOT_BTN
     bootButtonTick(millis());
+#endif
+#if defined(TDECK_PLUS)
+    tdeckKeysTick(millis());
 #endif
     if (g_consoleCharge) { g_consoleCharge = false; if (s_chargeMode) exitChargeMode(); else s_chargeWanted = true; }
 #if SQW_SPEAKER
@@ -8776,6 +8868,8 @@ void loop() {
             info.boardName = "StickS3 LAB";
 #elif defined(CARDPUTER_ADV)
             info.boardName = "Cardputer ADV LAB";
+#elif defined(TDECK_PLUS)
+            info.boardName = "tdeck-plus LAB";
 #elif defined(FREENOVE_S3_35)
             info.boardName = "freenove-s3-35 BETA";
 #elif defined(FREENOVE_S3_40)
