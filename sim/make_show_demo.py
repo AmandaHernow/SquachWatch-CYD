@@ -32,6 +32,20 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.36.0 "Highway to the Danger Zone", at the Marauder V8's 320x240: the
+    # GPS fix on the main screen over SYNTHWAVE (--gps feeds the sample's
+    # fix, at a Sydney Harbour landmark; the battery lamp at its new double
+    # size), DIAGNOSTICS mid-drive (--gps fills the wardrive lines), then the
+    # yeti: tapped into the disco (SQUACHSIM_YETI=0), the floss (=1), and
+    # thrown mid-disco (SQUACHSIM_YETI brings him on first), landing "OOF."
+    # and stomping off "NOT TOY."
+    "highway-to-the-danger-zone": [
+        ("clear", 40, 50, ["--noseed", "--bg", "10", "--gps"], {"SQUACHSIM_BATT": "80"}, 1500, "NEW BOARD: THE MARAUDER V8. GPS LOCKED."),
+        ("diagnostics", 10, 1, ["--gps"], {}, 2300, "WARDRIVE IT. A WIGLE FILE, STRAIGHT TO THE SD CARD."),
+        ("clear", 40, 70, ["--noseed", "--bg", "5", "--pet", "2"], {"SQUACHSIM_YETI": "0", "SQUACHSIM_BATT": "80"}, 1300, "TAP THE YETI: SATURDAY NIGHT YETI"),
+        ("clear", 40, 70, ["--noseed", "--bg", "5", "--pet", "2"], {"SQUACHSIM_YETI": "1", "SQUACHSIM_BATT": "80"}, 1300, "TAP AGAIN: THE FLOSS"),
+        ("clear", 40, 90, ["--noseed", "--bg", "5", "--pet", "2"], {"SQUACHSIM_YETI": "0", "SQUACHSIM_THROW": "c:-1:0:170:-110", "SQUACHSIM_BATT": "80"}, 2000, "THROW HIM. OOF. HE IS NOT A TOY."),
+    ],
     # v1.35.0 "Pump Up the Jam", shot on the 3.5in CBD (480x320). A GIF has no
     # sound, so the captions carry it: the SOUND and VOLUME rows
     # (SQUACHSIM_SPEAKER lists them; the emulator has no speaker), then each
