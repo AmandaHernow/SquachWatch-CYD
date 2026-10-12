@@ -601,6 +601,9 @@ int main(int argc, char** argv) {
     // SQUACHSIM_CLIPCATCH=TYPE: C1iPPY has just seen a catch of that type and
     // has his expert opinion ready.
     if (const char* cc = getenv("SQUACHSIM_CLIPCATCH")) Pet::noteCatch((uint8_t)atoi(cc));
+    // SQUACHSIM_YETI=0 or 1: the yeti pet (--pet 2) comes straight on and
+    // dances the disco (0) or the floss (1).
+    if (const char* yd = getenv("SQUACHSIM_YETI")) Pet::yetiDance((int8_t)atoi(yd));
     // SQUACHSIM_JAIL=1: arrested as the screen opens, sirens and all; =2 is
     // already serving, the ball in place.
     if (const char* jl = getenv("SQUACHSIM_JAIL")) {
@@ -1133,7 +1136,9 @@ int main(int argc, char** argv) {
     // landed, then a pet (or, on his shades with the aura lit, a reading).
     // Anything else is the background's.
     auto tapAt = [&](int x, int y, uint32_t when) {
-        if (Squachy::hitTest(x, y)) { Squachy::noteTapAt(x, y); Squachy::trigger(Squachy::Event::PETTED); }
+        // The pet first, as on the board: a still tap is a grab and a let-go.
+        if (Pet::clippyHit(x, y)) { Pet::clippyGrab(x, y, when); Pet::clippyRelease(when); }
+        else if (Squachy::hitTest(x, y)) { Squachy::noteTapAt(x, y); Squachy::trigger(Squachy::Event::PETTED); }
         else {
             Theme::backgroundTap(x, y, when);
             if (Theme::consumeOwlReek()) Squachy::unlockShambler();

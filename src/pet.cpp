@@ -142,7 +142,9 @@ static const uint8_t YETI_QUIPS_N = sizeof(YETI_QUIPS) / sizeof(YETI_QUIPS[0]);
 // Always in from the left and out to the right, because snowYeti() draws him
 // facing one way and a mirrored version would be new art -- which is the one
 // thing this was meant not to need.
-enum class YPhase : uint8_t { AWAY, IN, TALK, NAP, OUT };
+// DANCE, and the four of a throw (HELD, AIR, FLOPPED face-down, STOMP off),
+// live in pet_yeti.inc with the Yeti Lab's dances.
+enum class YPhase : uint8_t { AWAY, IN, TALK, NAP, OUT, DANCE, HELD, AIR, FLOPPED, STOMP };
 static YPhase    s_yPhase  = YPhase::AWAY;
 static uint32_t  s_yNextAt = 0, s_yAt = 0;
 static float     s_yX      = -100.0f;
@@ -457,6 +459,14 @@ static void toasterPoke(uint32_t now);
 static void toasterGrab(int x, int y, uint32_t now);
 static void toasterDrag(int x, int y, uint32_t now);
 static void toasterRelease(uint32_t now);
+// The yeti can be picked up too (pet_yeti.inc), while he is on screen.
+static bool yetiChosen() { return Squachy::petChoice() == Squachy::PetId::YETI && Squachy::petUnlocked(); }
+static bool yetiHit(int x, int y);
+static bool yetiCenter(int& x, int& y);
+static void yetiPoke(uint32_t now);
+static void yetiGrab(int x, int y, uint32_t now);
+static void yetiDrag(int x, int y, uint32_t now);
+static void yetiRelease(uint32_t now);
 // The ball and chain, in pet_jail.inc: while it is out, a touch on the pet
 // is a touch on the ball.
 static void noteThrow(uint32_t now);
@@ -494,12 +504,14 @@ bool clippyHit(int x, int y) {
     x /= s_k; y /= s_k;
     if (ballOut(millis())) return ballHit(x, y);
     if (toasterOn()) return toasterHit(x, y);
+    if (yetiChosen()) return yetiHit(x, y);
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return false;
     return x >= s_cX - 4 && x <= s_cX + 30 && y >= s_cY - 4 && y <= s_cY + CLIP_H;
 }
 
 void clippyPoke(uint32_t now) {
     if (toasterOn()) { toasterPoke(now); return; }
+    if (yetiChosen()) { yetiPoke(now); return; }
     // A run of pokes walks the four lines; a pause starts it over.
     if (now - s_cPokeAt > 8000) s_cPoke = 0;
     s_cPokeAt = now;
@@ -511,6 +523,7 @@ void clippyPoke(uint32_t now) {
 static bool clippyCenterZ(int& x, int& y) {
     if (ballOut(millis())) { if (s_jX < -50) return false; x = s_jX; y = s_jY - s_jR; return true; }
     if (toasterOn()) return toasterCenter(x, y);
+    if (yetiChosen()) return yetiCenter(x, y);
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return false;
     x = s_cX + 11; y = s_cY + 24;
     return true;
@@ -525,6 +538,7 @@ void clippyGrab(int x, int y, uint32_t now) {
     x /= s_k; y /= s_k;
     if (ballOut(now)) { s_jGrab = true; return; }
     if (toasterOn()) { toasterGrab(x, y, now); return; }
+    if (yetiChosen()) { yetiGrab(x, y, now); return; }
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return;
     s_cTh = ClipThrow::HELD;
     s_cfX = (float)s_cX; s_cfY = (float)s_cY;
@@ -536,6 +550,7 @@ void clippyDrag(int x, int y, uint32_t now) {
     x /= s_k; y /= s_k;
     if (s_jGrab) return;
     if (toasterOn()) { toasterDrag(x, y, now); return; }
+    if (yetiChosen()) { yetiDrag(x, y, now); return; }
     if (s_cTh != ClipThrow::HELD) return;
     gripMove(s_cG, x, y, now);
 }
@@ -555,6 +570,7 @@ static void clipLaunch(float vx, float vy, uint32_t now) {
 void clippyRelease(uint32_t now) {
     if (s_jGrab) { s_jGrab = false; ballPoke(now); return; }
     if (toasterOn()) { toasterRelease(now); return; }
+    if (yetiChosen()) { yetiRelease(now); return; }
     if (s_cTh != ClipThrow::HELD) return;
     float vx, vy;
     switch (gripLetGo(s_cG, now, vx, vy)) {
@@ -943,6 +959,7 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
 #include "pet_jail.inc"
 
 static void bubble(TFT_eSPI& t, int x, int y, int screenW, const char* s);   // below
+#include "pet_yeti.inc"
 
 void drawHeldBalloons(TFT_eSPI& t) {
     const int k = s_k;
@@ -981,6 +998,8 @@ void reset() {
     s_yAnswered = false;
     s_yFlinchAt = 0;
     s_yLine  = nullptr;
+    s_yDanceVisit = false;
+    s_yLandAt = 0; s_yDust = false; s_yFlung = false;
     s_cX     = -100;
     s_cHop   = PetHop();
     s_cTh    = ClipThrow::NONE;
@@ -1008,6 +1027,7 @@ static void bubble(TFT_eSPI& t, int x, int y, int screenW, const char* s) {
 // other side. Everything hangs off his footprint the way the lil guy's does.
 static void yetiTick(TFT_eSPI& t, uint32_t now, int screenW, int cx, int halfW, int bot) {
     const int baseY = bot;                       // his feet, on Squachy's floor
+    s_yFloor = bot;
     switch (s_yPhase) {
     case YPhase::AWAY: {
         if (!s_yNextAt) s_yNextAt = now + 9000u;
@@ -1016,11 +1036,27 @@ static void yetiTick(TFT_eSPI& t, uint32_t now, int screenW, int cx, int halfW, 
         // walk-on already knows where it is going.
         const uint8_t pick = (uint8_t)random(0, 100);
         s_yNap   = (pick < 22);                       // roughly one in five
+        // About one in three he dances instead of talking: the disco or the
+        // floss, either one. Often enough that anyone who picked him sees
+        // it. The console can ask for one by name.
+        s_yDanceVisit = (pick >= 22 && pick < 55);
+        s_yDance = (uint8_t)random(0, 2);
+        if (s_yForce >= 0) { s_yNap = false; s_yDanceVisit = true; s_yDance = (uint8_t)s_yForce; s_yForce = -1; }
         s_yQuip  = (uint8_t)random(0, YETI_QUIPS_N);
         // A third of the time, if he has something to say about where he is,
         // he says that instead of a line from the general set.
         const char* place = placeLine((uint8_t)random(0, 3));
         s_yLine  = (place && random(0, 3) == 0) ? place : YETI_QUIPS[s_yQuip];
+        // Until he has been thrown, and until he has been tapped, half his
+        // lines are a dare in reverse: he insists on the one thing you
+        // should try. Found, they stop.
+        {
+            static const char* const HINT_THROW[3] = { "YETI NO FLY.", "NO PICK UP.", "TOO HEAVY. NO." };
+            static const char* const HINT_TAP[3]   = { "NO POKE YETI.", "YETI NO DANCE.", "DON'T TAP." };
+            const uint8_t found = Settings::yetiFound();
+            if (!(found & 1) && random(0, 2) == 0)      s_yLine = HINT_THROW[random(0, 3)];
+            else if (!(found & 2) && random(0, 2) == 0) s_yLine = HINT_TAP[random(0, 3)];
+        }
         s_yAnswered = false;
         s_yFlinchAt = 0;
         s_yX     = -(float)Theme::YETI_W;
@@ -1035,14 +1071,23 @@ static void yetiTick(TFT_eSPI& t, uint32_t now, int screenW, int cx, int halfW, 
         s_yAt = now;
         if (s_yX >= target) {
             if (s_yX - target <= stepPx + 1.0f) s_yX = target;   // as the lil guy: no leap back
-            s_yPhase = s_yNap ? YPhase::NAP : YPhase::TALK;
+            s_yPhase = s_yNap ? YPhase::NAP : (s_yDanceVisit ? YPhase::DANCE : YPhase::TALK);
             s_yAt = now;
             if (s_yNap) s_yLine = "YETI NAP.";
         }
         break;
     }
     case YPhase::TALK:
+        // Squachy breaks into a dance next to him: he joins in. Badly.
+        if (Squachy::dancing()) { s_yPhase = YPhase::DANCE; s_yDance = (uint8_t)random(0, 2); s_yAt = now; break; }
         if (now - s_yAt >= YETI_TALK_MS) { s_yPhase = YPhase::OUT; s_yAt = now; }
+        break;
+    case YPhase::DANCE:
+        if (now - s_yAt >= (s_yDance ? YETI_FLOSS_MS : YETI_DISCO_MS)) { s_yPhase = YPhase::OUT; s_yAt = now; }
+        break;
+    case YPhase::HELD: case YPhase::AIR: case YPhase::FLOPPED: case YPhase::STOMP:
+        yetiFlightTick(t, now, screenW, baseY);
+        if (s_yPhase != YPhase::OUT) return;
         break;
     case YPhase::NAP:
         if (now - s_yAt >= YETI_NAP_MS) { s_yPhase = YPhase::OUT; s_yAt = now; }
@@ -1065,6 +1110,12 @@ static void yetiTick(TFT_eSPI& t, uint32_t now, int screenW, int cx, int halfW, 
     // cracks up, which is funnier about a third of the time and costs a line
     // nobody has to write. He uses his OWN bubble, so the two are plainly
     // different voices rather than one caption box changing hands.
+    // A dance gets no answer, only a laugh, and none at all when Squachy is
+    // the one who started dancing.
+    if (s_yPhase == YPhase::DANCE && !s_yAnswered && now - s_yAt >= YETI_ANSWER_MS) {
+        s_yAnswered = true;
+        if (!Squachy::dancing() && random(0, 2) == 0) Squachy::visitLaugh(now);
+    }
     const bool standing = (s_yPhase == YPhase::TALK || s_yPhase == YPhase::NAP);
     if (standing && !s_yAnswered && now - s_yAt >= YETI_ANSWER_MS) {
         s_yAnswered = true;
@@ -1080,6 +1131,7 @@ static void yetiTick(TFT_eSPI& t, uint32_t now, int screenW, int cx, int halfW, 
         }
     }
 
+    if (s_yPhase == YPhase::DANCE) { yetiDanceDraw(t, (int)s_yX, baseY, now); return; }
     Theme::YetiPose pose = Theme::YetiPose::WALK;
     if (s_yPhase == YPhase::NAP)                             pose = Theme::YetiPose::NAP;
     else if (s_yFlinchAt && now - s_yFlinchAt < YETI_FLINCH_MS) pose = Theme::YetiPose::FLINCH;
@@ -1134,7 +1186,8 @@ void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
         // Squachy picked up mid-visit: the yeti leaves on foot instead of
         // vanishing, and no new visit starts while he is in the air.
         if (Squachy::isHeld()) {
-            if (s_yPhase == YPhase::IN || s_yPhase == YPhase::TALK || s_yPhase == YPhase::NAP) { s_yPhase = YPhase::OUT; s_yAt = now; }
+            if (s_yPhase == YPhase::IN || s_yPhase == YPhase::TALK || s_yPhase == YPhase::NAP ||
+                s_yPhase == YPhase::DANCE) { s_yPhase = YPhase::OUT; s_yAt = now; }
             if (s_yPhase == YPhase::AWAY) return;
         }
         (void)ytop; (void)ybot;

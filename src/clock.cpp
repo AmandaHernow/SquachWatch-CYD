@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "crowd_bench.h"
 #include "blackbox.h"    // BLACKBOX dumps it
+#include "pet.h"         // YETI DISCO / YETI FLOSS
 #include "ota_core.h"    // VERTEST, on bench builds
 #include "frame_push.h"  // PUSH, the frame-push switch
 #include "fast_sprite.h" // FAST, the sprite fast-path switch
@@ -575,6 +576,9 @@ void pollSerial() {
         if (strcasecmp(line, "EXT ROT") == 0) { g_consoleExt = 2; continue; }
 #endif
         if (strcasecmp(line, "CLIPPY") == 0) { g_consoleClippy = true; continue; }
+        // The yeti pet's dances, on demand: now if he is there, else he comes on.
+        if (strcasecmp(line, "YETI DISCO") == 0) { Pet::yetiDance(0); Serial.println("[yeti] disco"); continue; }
+        if (strcasecmp(line, "YETI FLOSS") == 0) { Pet::yetiDance(1); Serial.println("[yeti] floss"); continue; }
         if (strcasecmp(line, "TOASTER") == 0) { g_consoleToaster = true; continue; }
         if (strcasecmp(line, "BALL") == 0)    { g_consoleBall = true; continue; }
         if (strcasecmp(line, "PET") == 0)     { g_consolePet = true; continue; }

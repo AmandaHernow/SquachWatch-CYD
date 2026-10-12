@@ -741,6 +741,18 @@ namespace Theme {
     // (pet.h) does. `baseY` is the ground his feet stand on. He is drawn at
     // the size the hill draws him: no new art, and nothing to scale.
     void drawYeti(TFT_eSPI& t, int x, int baseY, uint32_t now, YetiPose pose);
+    // A pose that is not one of the five: the pet's dances and his getting
+    // up after a throw. Arm points are from his centre and his body line,
+    // left arm first, elbow then hand -- the same numbers the five poses
+    // use internally. `behind` (-1 left, 1 right, 0 neither) draws that arm
+    // before his body, which is the whole trick of the floss. Nothing here
+    // bobs on its own: a dance moves him on its own beat.
+    struct YetiRig {
+        int8_t arms[2][4];
+        int8_t hop, crouch, lean, hip, behind, mouth, lLift, rLift, headShift, bulge;
+        bool   eyesOff;
+    };
+    void drawYetiRig(TFT_eSPI& t, int x, int baseY, uint32_t now, const YetiRig& r);
     // How wide and tall he is, so a caller can place him without knowing
     // how he is built.
     static const int YETI_W = 36, YETI_H = 42;

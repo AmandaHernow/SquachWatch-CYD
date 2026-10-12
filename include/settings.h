@@ -125,6 +125,10 @@ namespace Settings {
     // first time the button turns the screen off.
     bool       pocketNoteShown();
     void       markPocketNoteShown();
+    // What the yeti pet has been found to do: bit 0 he has been thrown, bit
+    // 1 he has been tapped (and danced). Until each is, his lines drop hints.
+    uint8_t    yetiFound();
+    void       markYetiFound(uint8_t bits);
 
     // Disables the title-bar rotate button (and the ROTATED gesture it
     // triggers) without touching its icon -- an accidental tap during

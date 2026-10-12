@@ -6736,7 +6736,8 @@ static void snowSpray(TFT_eSPI& t, int x, int gy, int8_t carve, float power, uin
 // the arm branch used to key entirely off the pose, so there was no way
 // to have one without the other.
 static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bulge = 0,
-                     bool holding = false, int holdDX = 0, int holdDY = 0) {
+                     bool holding = false, int holdDX = 0, int holdDY = 0,
+                     const YetiRig* rig = nullptr) {
     // Mid grey, not off-white. At (201,206,214) he quantised to
     // (219,219,255) -- within one palette step of the snow he stands on,
     // so his whole body vanished and he read as a floating head. The
@@ -6761,10 +6762,16 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
         t.fillRect(x + 18, y - 6, 6, 3, tooth);
         return;
     }
-    const int bob = (int)(sinf((float)now / (pose == YPose::WINDED ? 260.0f : 90.0f))
-                          * (pose == YPose::WINDED ? 2.5f : 1.5f));
-    const int B = y - bob;
-    const int lean = (pose == YPose::WINDED) ? 4 : ((pose == YPose::RECOIL) ? -6 : 0);
+    // A rig (the pet's dances) brings its own everything: no bob, its own
+    // lean and hips, a hop, and a crouch that lowers the body while the
+    // feet stay planted -- B is the body line, Bf the feet.
+    const int bob = rig ? 0 : (int)(sinf((float)now / (pose == YPose::WINDED ? 260.0f : 90.0f))
+                                    * (pose == YPose::WINDED ? 2.5f : 1.5f));
+    const int cr = rig ? rig->crouch : 0;
+    const int Bf = y - bob - (rig ? rig->hop : 0);
+    const int B = Bf + cr;
+    if (rig) bulge = rig->bulge;
+    const int lean = rig ? rig->lean : ((pose == YPose::WINDED) ? 4 : ((pose == YPose::RECOIL) ? -6 : 0));
     // The legs were detached, twice over. The body's six rows start at
     // B-38 and are 22 tall, so the belly ends at B-16 -- and the legs
     // started at B-13, leaving three pixels of night between his hips
@@ -6774,26 +6781,29 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
     // Legs now start at B-17, one pixel INTO the bottom body row so
     // there is no seam at any bob offset, and they carry half the lean:
     // his hips move with him, just less than his shoulders do.
-    const int hip = lean / 2;
+    const int hip = rig ? rig->hip : lean / 2;
     // A gait, in opposition. Free -- it moves rectangles that were being
     // drawn anyway -- and a running character with rigid legs was the
     // other half of why he read as a cardboard cutout.
-    const int gait = (pose == YPose::RUN) ? (int)(sinf((float)now / 90.0f) * 4.0f) : 0;
-    t.fillRect(x - 8 + hip, B - 17, 4, 15, limb);
-    t.fillRect(x + 4 + hip, B - 17, 4, 15, limb);
+    const int gait = (!rig && pose == YPose::RUN) ? (int)(sinf((float)now / 90.0f) * 4.0f) : 0;
+    t.fillRect(x - 8 + hip, B - 17, 4, 15 - cr, limb);
+    t.fillRect(x + 4 + hip, B - 17, 4, 15 - cr, limb);
     // Feet swing fore and aft, and the trailing one lifts off the snow.
-    t.fillRect(x - 12 + hip + gait, B - 3 - ((gait > 2) ? 1 : 0), 8, 3, limb);
-    t.fillRect(x +  4 + hip - gait, B - 3 - ((gait < -2) ? 1 : 0), 8, 3, limb);
-    static const int8_t  gw[6] = { 8, 10, 11, 11, 10, 8 };
-    static const uint8_t gh[6] = { 3, 3, 4, 5, 4, 3 };
-    int yy = B - 38;
-    for (int i = 0; i < 6; i++) {
-        const int extra = (bulge && i >= 1 && i <= 4) ? bulge : 0;
-        t.fillRect(x - gw[i] - extra + lean, yy, (gw[i] + extra) * 2, gh[i], fur);
-        yy += gh[i];
-    }
-    t.fillRect(x - 11 + lean, B - 33, 3, 14, furS);
-    t.fillRect(x + 6 + lean,  B - 35, 4, 12, furHi);
+    t.fillRect(x - 12 + hip + gait, Bf - 3 - ((gait > 2) ? 1 : 0) - (rig ? rig->lLift : 0), 8, 3, limb);
+    t.fillRect(x +  4 + hip - gait, Bf - 3 - ((gait < -2) ? 1 : 0) - (rig ? rig->rLift : 0), 8, 3, limb);
+    // The torso, drawn once the arm that goes behind him (a rig's) is down.
+    auto drawBody = [&]() {
+        static const int8_t  gw[6] = { 8, 10, 11, 11, 10, 8 };
+        static const uint8_t gh[6] = { 3, 3, 4, 5, 4, 3 };
+        int yy = B - 38;
+        for (int i = 0; i < 6; i++) {
+            const int extra = (bulge && i >= 1 && i <= 4) ? bulge : 0;
+            t.fillRect(x - gw[i] - extra + lean, yy, (gw[i] + extra) * 2, gh[i], fur);
+            yy += gh[i];
+        }
+        t.fillRect(x - 11 + lean, B - 33, 3, 14, furS);
+        t.fillRect(x + 6 + lean,  B - 35, 4, 12, furHi);
+    };
     // ---- arms: shoulder, elbow, hand ---------------------------------
     // What was here before was two dark bars floating beside him. The arm
     // rect ran y B-40..B-28 at x-20..x-16, while the torso's widest row
@@ -6809,9 +6819,13 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
     // instead of being bolted to the side of it. Only the forearm goes
     // dark. The colour change does as much work here as the geometry.
     const int jy = B - 34;
-    for (int8_t sd = -1; sd <= 1; sd += 2) {
+    auto arm = [&](int sd) {
         int ex, ey, hx, hy;
-        if (holding || pose == YPose::EAT || pose == YPose::RECOIL) {
+        if (rig) {
+            // Straight from the rig: whatever the dance says this frame.
+            const int8_t* a = rig->arms[sd < 0 ? 0 : 1];
+            ex = a[0]; ey = a[1]; hx = a[2]; hy = a[3];
+        } else if (holding || pose == YPose::EAT || pose == YPose::RECOIL) {
             // Reaching. Held rather than cycling -- this is a gesture with
             // a victim on the end of it, not a loop. holdDX/holdDY let the
             // eat sequence walk the hands from the snow up to eye level
@@ -6855,19 +6869,28 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
             const int e = (c == 1) ? 1 : 0;
             t.fillRect(ahx - 4 + c * 3, ahy + 3 - e, 2, 4 + e, claw);
         }
+    };
+    const int behind = rig ? rig->behind : 0;
+    if (behind) arm(behind);
+    drawBody();
+    for (int sd = -1; sd <= 1; sd += 2) if (sd != behind) arm(sd);
+    // The head can click a pixel off the body (a rig's headShift); eyes can
+    // go dark for a blink; the mouth opens as wide as the rig says.
+    const int hl = lean + (rig ? rig->headShift : 0);
+    t.fillRect(x - 11 + hl, B - 52, 22, 4, mane);
+    t.fillRect(x - 13 + hl, B - 50, 3, 7, mane);
+    t.fillRect(x + 10 + hl, B - 50, 3, 7, mane);
+    t.fillRect(x - 10 + hl, B - 49, 20, 13, head);
+    if (!rig || !rig->eyesOff) {
+        t.fillRect(x - 7 + hl, B - 45, 6, 4, eye);
+        t.fillRect(x + 1 + hl, B - 45, 6, 4, eye);
+        t.fillRect(x - 7 + hl, B - 46, 3, 2, eye);
+        t.fillRect(x + 4 + hl, B - 46, 3, 2, eye);
     }
-    t.fillRect(x - 11 + lean, B - 52, 22, 4, mane);
-    t.fillRect(x - 13 + lean, B - 50, 3, 7, mane);
-    t.fillRect(x + 10 + lean, B - 50, 3, 7, mane);
-    t.fillRect(x - 10 + lean, B - 49, 20, 13, head);
-    t.fillRect(x - 7 + lean, B - 45, 6, 4, eye);
-    t.fillRect(x + 1 + lean, B - 45, 6, 4, eye);
-    t.fillRect(x - 7 + lean, B - 46, 3, 2, eye);
-    t.fillRect(x + 4 + lean, B - 46, 3, 2, eye);
-    const int th = (pose == YPose::EAT) ? 7 : ((pose == YPose::WINDED) ? 6 : 4);
-    t.fillRect(x - 7 + lean, B - 40, 14, th, tooth);
-    for (int i = 0; i < 4; i++) t.fillRect(x - 4 + i * 3 + lean, B - 40, 1, th, head);
-    if (pose == YPose::EAT) t.fillRect(x - 7 + lean, B - 40 + th / 2, 14, 1, head);
+    const int th = rig ? rig->mouth : ((pose == YPose::EAT) ? 7 : ((pose == YPose::WINDED) ? 6 : 4));
+    t.fillRect(x - 7 + hl, B - 40, 14, th, tooth);
+    for (int i = 0; i < 4; i++) t.fillRect(x - 4 + i * 3 + hl, B - 40, 1, th, head);
+    if (!rig && pose == YPose::EAT) t.fillRect(x - 7 + hl, B - 40 + th / 2, 14, 1, head);
 }
 
 // He is not only the hill's any more: the pet draws him too. Two of his five
@@ -6881,6 +6904,10 @@ void drawYeti(TFT_eSPI& t, int x, int baseY, uint32_t now, YetiPose pose) {
     case YetiPose::STAND:  break;
     }
     snowYeti(t, x, baseY, now, p);
+}
+
+void drawYetiRig(TFT_eSPI& t, int x, int baseY, uint32_t now, const YetiRig& r) {
+    snowYeti(t, x, baseY, now, YPose::WINDED, 0, false, 0, 0, &r);
 }
 
 // Anything the background needs drawn ON TOP of the mascot. Called by

@@ -759,6 +759,18 @@ void markInfoPrimerShown() {
 
 bool pocketNoteShown() { return s_pocketNoteShown; }
 
+static uint8_t s_yetiFound = 0xFF;   // read on first use
+uint8_t yetiFound() {
+    if (s_yetiFound == 0xFF) s_yetiFound = s_prefs.getUChar("yetiFound", 0);
+    return s_yetiFound;
+}
+void markYetiFound(uint8_t bits) {
+    const uint8_t now = (uint8_t)(yetiFound() | bits);
+    if (now == s_yetiFound) return;
+    s_yetiFound = now;
+    s_prefs.putUChar("yetiFound", now);
+}
+
 void markPocketNoteShown() {
     s_pocketNoteShown = true;
     s_prefs.putBool("pocketnote", true);
