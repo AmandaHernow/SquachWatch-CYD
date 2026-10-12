@@ -7596,6 +7596,14 @@ void loop() {
                 // every band: the keyboard's top half was being pushed to
                 // the bottom half as well (issue #25).
                 if (frameBufferOk) uiWifiPassRedrawAll();
+#elif SQW_PUSH_ASYNC
+                // Two frames taking turns (see pushFrame()): a key redrawn in
+                // one is still the old key in the other, and SHIFT flipped
+                // the board between capitals and lower case every frame
+                // (issue #52, the C5, adding a network from WIFI NETWORKS --
+                // update mode has given the frames up, so it never showed
+                // there). Everything, every frame, while the frames exist.
+                if (frameBufferOk) uiWifiPassRedrawAll();
 #endif
                 uiWifiPassTick(t, now);
             });
