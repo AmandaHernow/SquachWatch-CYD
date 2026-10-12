@@ -105,10 +105,20 @@ jobs:
         run: pip install --upgrade platformio
       - name: Build RockBase NM-CYD-C5 (ESP32-C5)
         run: pio run -e nm-cyd-c5
+      # The Marauder V8 (ESP32-C5, 8 MB) on the same runner and platform. Its
+      # own step can fail without taking the NM-CYD-C5 with it.
+      - name: Build Marauder V8 (ESP32-C5)
+        continue-on-error: true
+        run: pio run -e marauder-v8
       - name: Collect
         run: |
           mkdir -p c5
           cp .pio/build/nm-cyd-c5/bootloader.bin .pio/build/nm-cyd-c5/partitions.bin .pio/build/nm-cyd-c5/firmware.bin c5/
+          # The V8's bootloader and table are its own (DIO, 8 MB, 3.5 MB
+          # slots), named for it so they never mix with the NM-CYD-C5's.
+          if [ -f .pio/build/marauder-v8/firmware.bin ]; then
+            for f in bootloader partitions firmware; do cp ".pio/build/marauder-v8/$f.bin" "c5/marauder-v8-$f.bin"; done
+          fi
           # boot_app0 lives in the framework the C5 was built with, not the
           # Xtensa boards' one.
           cp "$(find ~/.platformio/packages -path '*framework-arduinoespressif32*/tools/partitions/boot_app0.bin' | head -1)" c5/boot_app0.bin
@@ -266,6 +276,14 @@ jobs:
             cp c5/boot_app0.bin  esp32c5-boot_app0.bin
           else
             echo "::warning::No NM-CYD-C5 build this run; the release goes out without it."
+          fi
+          # The Marauder V8, four parts like the NM-CYD-C5 and for the same
+          # reason; boot_app0 is the C5's one, shared.
+          if [ -f c5/marauder-v8-firmware.bin ]; then
+            cp c5/marauder-v8-firmware.bin c5/marauder-v8-bootloader.bin c5/marauder-v8-partitions.bin .
+            cp c5/boot_app0.bin esp32c5-boot_app0.bin
+          else
+            echo "::warning::No Marauder V8 build this run; the release goes out without it."
           fi
           python -m esptool --chip esp32 merge_bin \
             -o firmware-cyd-merged.bin \
@@ -463,7 +481,8 @@ jobs:
                     "web-flasher/manifest-crowpanel7.json",
                     "web-flasher/manifest-sticks3.json",
                     "web-flasher/manifest-cardputer-adv.json",
-                    "web-flasher/manifest-nm-cyd-c5.json"):
+                    "web-flasher/manifest-nm-cyd-c5.json",
+                    "web-flasher/manifest-marauder-v8.json"):
               m = json.load(open(p))
               m["version"] = "${{ steps.ver.outputs.version }}"
               if name: m["release_name"] = name
@@ -570,7 +589,7 @@ jobs:
             manifest-cyd35-fast.json \
             manifest-cyd35c-fast.json \
             $(ls nm-cyd-c5-*.bin esp32c5-*.bin 2>/dev/null) \
-            $([ -f nm-cyd-c5-firmware.bin ] && cp web-flasher/manifest-nm-cyd-c5.json manifest-nm-cyd-c5.json && echo manifest-nm-cyd-c5.json) \
+            $([ -f nm-cyd-c5-firmware.bin ] && cp web-flasher/manifest-nm-cyd-c5.json manifest-nm-cyd-c5.json && echo manifest-nm-cyd-c5.json)             $(ls marauder-v8-*.bin 2>/dev/null)             $([ -f marauder-v8-firmware.bin ] && cp web-flasher/manifest-marauder-v8.json manifest-marauder-v8.json && echo manifest-marauder-v8.json) \
             $(ls *-firmware.sig 2>/dev/null)
 
       - name: Build the browser emulator
@@ -642,6 +661,7 @@ jobs:
           cp web-flasher/manifest-sticks3.json _site/manifest-sticks3.json
           cp web-flasher/manifest-cardputer-adv.json _site/manifest-cardputer-adv.json
           cp web-flasher/manifest-nm-cyd-c5.json _site/manifest-nm-cyd-c5.json
+          cp web-flasher/manifest-marauder-v8.json _site/manifest-marauder-v8.json
           # A LAB RUN MUST NOT CHANGE WHAT THE PUBLIC PAGE SERVES.
           #
           # A Pages deploy is wholesale -- there is no partial update -- so a
@@ -718,7 +738,7 @@ jobs:
           import json, shutil, os
           label = "${{ steps.ver.outputs.label }}"
           ver   = "${{ steps.ver.outputs.version }}"
-          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "freenove-s3-35", "crowpanel7", "nm-cyd-c5", "sticks3", "cardputer-adv"):
+          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "freenove-s3-35", "crowpanel7", "nm-cyd-c5", "marauder-v8", "sticks3", "cardputer-adv"):
               # The C5 comes from its own runner and may not have come at all.
               if not os.path.exists(board + "-firmware.bin"):
                   print("::warning::no %s build this run; not in the lab list" % board)
@@ -784,6 +804,20 @@ jobs:
           p, n = re.subn(r'[ \t]*<option value="\./manifest-nm-cyd-c5\.json"[^\n]*</option>\n', "", p)
           open("_site/index.html", "w", encoding="utf-8").write(p)
           print("::warning::no NM-CYD-C5 build this run: its option is off the page (%d removed)" % n)
+          PY
+            fi
+            # The Marauder V8, the same way: its own three files and the
+            # C5's boot_app0, or off this release's page.
+            if [ -f marauder-v8-firmware.bin ]; then
+              cp marauder-v8-firmware.bin marauder-v8-bootloader.bin marauder-v8-partitions.bin esp32c5-boot_app0.bin _site/
+            else
+              rm -f _site/manifest-marauder-v8.json
+              python3 - <<'PY'
+          import re
+          p = open("_site/index.html", encoding="utf-8").read()
+          p, n = re.subn(r'[ \t]*<option value="\./manifest-marauder-v8\.json"[^\n]*</option>\n', "", p)
+          open("_site/index.html", "w", encoding="utf-8").write(p)
+          print("::warning::no Marauder V8 build this run: its option is off the page (%d removed)" % n)
           PY
             fi
           fi

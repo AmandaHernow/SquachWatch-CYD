@@ -161,6 +161,26 @@ high.
 
 Not usable on an S3: GPIO 26-32 (flash/PSRAM) and 33-37 (octal PSRAM).
 
+## Marauder V8 (justcallmekoko) — `[env:marauder-v8]`
+
+An ESP32-C5 (8 MB flash, 4 MB PSRAM) behind a CP210x. Marauder's own V8
+display setup is not public, so the screen, touch and backlight pins were
+found on the board (2026-10-12); the rest are from Marauder's `configs.h`.
+
+| Part | Pins |
+|---|---|
+| SPI bus (screen, touch, SD) | SCK 6, MOSI 7, MISO 2 |
+| ILI9341 2.8" 240×320 | CS 23, DC 24, reset on the board's; BGR; 40 MHz (80 glitches) |
+| Backlight | GPIO 8, high = on |
+| XPT2046 resistive touch | CS 9 |
+| SD card (SPI) | CS 10 |
+| MAX17048 battery gauge | I2C SDA 5, SCL 4, address 0x36 |
+| GPS | its TX into GPIO 14, 115200 baud |
+| Activity LED | GPIO 28, high = on (a single-colour status light) |
+
+Not used: 27 (an unfitted WS2812 in Marauder's build, and a strapping pin),
+15-22 (flash and PSRAM), 11/12 (the console), 13 (GPS RX, nothing to send).
+
 ## Sources
 
 - [witnessmenow/ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display) (MIT)

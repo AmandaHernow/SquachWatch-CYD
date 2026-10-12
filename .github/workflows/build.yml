@@ -75,6 +75,10 @@ jobs:
       - name: Build RockBase NM-CYD-C5 (ESP32-C5)
         run: pio run -e nm-cyd-c5
 
+      # The Marauder V8: the same C5 platform, so no new toolchain.
+      - name: Build Marauder V8 (ESP32-C5)
+        run: pio run -e marauder-v8
+
   tests:
     # The decoders are pure arithmetic over byte buffers, so they run on a
     # desktop with no board and no display. Worth a job of their own: the

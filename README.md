@@ -95,6 +95,7 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | Freenove ESP32-S3 3.5" — FNK0104N | BETA | The black 3.5": a 320×480 panel on its own QSPI driver, capacitive touch, SDMMC card slot, WS2812 light, battery connector. Big text, and pets at double size |
 | Elecrow CrowPanel Advance 7.0 | BETA | 800×480, drawn at 400×240 doubled on purpose. Has a buzzer, silent unless you switch it on. [docs/CROWPANEL7.md](docs/CROWPANEL7.md) |
 | RockBase NM-CYD-C5 | BETA | The 2.8" CYD's glass on an ESP32-C5, the first RISC-V chip here. Scans **5 GHz** too (WIFI BANDS in Settings). [docs/NM-CYD-C5.md](docs/NM-CYD-C5.md) |
+| Marauder V8 (justcallmekoko) | BETA | The ESP32-C5 Marauder: 2.8" screen, GPS for **wardriving** to the SD card (a WiGLE file), and a battery gauge. Scans 5 GHz too |
 | M5Stack StickS3 | BETA | 1.14" screen, landscape, two buttons |
 | M5Stack Cardputer ADV | BETA | Driven from its keyboard. Not the original Cardputer |
 | LilyGo T-Watch S3 / S3 Plus | BETA | On your wrist, with a battery and a buzz. Listens to **LoRa**; the S3 Plus adds **GPS**. See [On the watch](#on-the-watch) |
@@ -654,6 +655,10 @@ SquachWatch-CYD/
   S3 boards from waking up deaf, and the LoRa radio driver and every decoder
   on the T-Watches: **DH5DAX**.
 - RockBase NM-CYD-C5 port, and its 5 GHz scanning: **quietradio**.
+- GPS and wardriving to the SD card on the CYD, and the SD log's dates
+  (PR #46): **jotra7**. The Marauder V8 wardrives with it.
+- The Marauder V8 itself, and the Marauder project it comes from:
+  **justcallmekoko**.
 - Freenove ESP32-S3 Display 2.8" port: **greasy-electronics**.
 - Freenove 3.2" pin work: **DevOpsDAdams**.
 - 3.5" capacitive (ESP32-3248S035C) build: **VV-B0Y**.
