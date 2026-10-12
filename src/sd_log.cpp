@@ -3,6 +3,9 @@
 #include "frame_push.h"   // busLock(): the card shares the panel's bus
 #include "sd_row.h"
 #include "clock.h"
+#if defined(CYD_GPS)
+#include "gnss.h"
+#endif
 #include <SD.h>
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
 // The Freenove S3's slot is wired for SDMMC, not SPI: every card call in this
@@ -214,9 +217,17 @@ void SdLog::logEvent(const Detection& d) {
         return;
     }
     char line[SdRow::ROW_MAX];
+#if defined(CYD_GPS)
+    // Where the board is now. The queue drains on the loop task within a
+    // frame or two of the detection, so this is where it was seen.
+    SdRow::line(line, sizeof(line), d,
+                Clock::trusted() ? Clock::nowEpoch() : 0, millis(),
+                &Gnss::fix(), Gnss::faked(), millis());
+#else
     SdRow::line(line, sizeof(line), d,
                 Clock::trusted() ? Clock::nowEpoch() : 0, millis(),
                 nullptr, false, 0);
+#endif
     f.print(line);
     f.close();
     FramePush::busUnlock();
@@ -227,8 +238,7 @@ void SdLog::wipe() {
     FramePush::busLock();
     // Walk the root and remove every file this firmware writes. Names are
     // /squachwatch-YYYYMMDD.log and /squachwatch-nodate.log; matching on the
-    // prefix takes them all rather than only today's, which is the whole point
-    // of a wipe.
+    // prefix takes every day's file, which is the whole point of a wipe.
     File dir = CARD.open("/");
     if (!dir) { FramePush::busUnlock(); return; }
     // Collect first, then remove: deleting while iterating openNextFile() is
