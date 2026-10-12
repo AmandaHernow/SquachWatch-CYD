@@ -86,6 +86,8 @@ extern volatile int8_t g_consoleSound;
 extern volatile bool g_consoleScreen;
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
 extern volatile bool g_consolePowerOff;   // main.cpp: POWER OFF, the Freenove boards' deep sleep
+extern volatile bool g_consoleNapTest;       // main.cpp: NAPTEST, POWER OFF that wakes itself 3 s later
+extern volatile bool g_consolePowerLog;   // main.cpp: POWERLOG, the power diary
 #endif
 extern volatile bool g_consoleRadioTest;
 extern volatile bool g_consolePmu;
@@ -112,6 +114,21 @@ static uint32_t    s_greeted  = 0;
 static uint32_t    s_mileSaid = 0;
 static bool        s_guess    = false;   // running from the note to self
 static uint32_t    s_lastNote = 0;       // millis() of the last note written
+#if defined(ARDUINO_ARCH_ESP32)
+// The guess outlives a restart the same way the time it guessed does. It did
+// not: the note's time stayed in the system clock across the next restart or
+// POWER OFF wake, and that boot, finding a clock already set, took it as a
+// real one -- the 3.5" ran ten and a half hours slow, trusted, after a flash
+// (2026-10-12). RTC RAM keeps the flag next to the time it describes.
+static const uint32_t GUESS_MAGIC = 0x6E55E550u;
+RTC_NOINIT_ATTR static uint32_t s_guessWord;
+#endif
+static void setGuess(bool g) {
+    s_guess = g;
+#if defined(ARDUINO_ARCH_ESP32)
+    s_guessWord = g ? GUESS_MAGIC : 0u;
+#endif
+}
 static const uint32_t NOTE_EVERY_MS = 10u * 60u * 1000u;
 
 #if !defined(ARDUINO_ARCH_ESP32)
@@ -196,7 +213,7 @@ bool setEpoch(uint32_t epoch) {
     if (epoch <= kPlausible) return false;
     // A real answer, from wherever: the guess is over, and the note is
     // brought up to date at once rather than ten minutes from now.
-    s_guess = false;
+    setGuess(false);
     writeSystemClock(epoch);
     noteKnown();
     if (s_begun) { s_prefs.putUInt("last", epoch); s_lastNote = millis(); }
@@ -469,12 +486,22 @@ void begin() {
     s_mileSaid = s_prefs.getUInt("mile", 0);
     // Carried across a soft reset with the date already known: the first
     // such boot is still the first day.
-    if (isSet()) { noteKnown(); return; }
+    if (isSet()) {
+#if defined(ARDUINO_ARCH_ESP32)
+        if (s_guessWord == GUESS_MAGIC) {
+            s_guess = true;
+            Serial.println("[clock] still the note's guess from before the restart");
+            return;
+        }
+#endif
+        noteKnown();
+        return;
+    }
     // A cold boot: the note to self, if there is one, as a floor.
     const uint32_t last = s_prefs.getUInt("last", 0);
     if (last > kPlausible) {
         writeSystemClock(last);
-        s_guess = true;
+        setGuess(true);
         char buf[40];
         formatClock(buf, sizeof buf);
         Serial.printf("[clock] no clock; starting from the last note: %s\n", buf);
@@ -603,6 +630,8 @@ void pollSerial() {
         if (strcasecmp(line, "SCREEN") == 0) { g_consoleScreen = true; continue; }
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
         if (strcasecmp(line, "POWER OFF") == 0) { g_consolePowerOff = true; continue; }
+        if (strcasecmp(line, "NAPTEST") == 0)   { g_consoleNapTest = true; g_consolePowerOff = true; continue; }
+        if (strcasecmp(line, "POWERLOG") == 0)  { g_consolePowerLog = true; continue; }
 #endif
         if (strcasecmp(line, "RADIO TEST") == 0) { g_consoleRadioTest = !g_consoleRadioTest; Serial.printf("[radio] bench test %s\n", g_consoleRadioTest ? "ON: cycling on the cable, screen or not" : "OFF"); continue; }
         if (strcasecmp(line, "PMU") == 0)    { g_consolePmu = true; continue; }

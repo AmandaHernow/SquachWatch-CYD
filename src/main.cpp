@@ -47,6 +47,7 @@
 #if defined(ESP32)
 #include <esp_sleep.h>       // deep sleep: the watch's heal cycle, the Freenove boards' POWER OFF
 #include <driver/rtc_io.h>   // the pull-up that keeps BOOT high through that sleep
+#include <esp_wifi.h>        // and WiFi stopped before it
 #endif
 // The core dump's own summary -- which task, and where. The emulator has
 // neither header, and nothing to summarise.
@@ -123,6 +124,28 @@ static bool takeBootCheckSkip() {
     g_bootCheckSkip = 0;
     return esp_reset_reason() == ESP_RST_SW && v == CHKSKIP_MAGIC;
 }
+#if SQW_SPEAKER
+// The Freenove boards' wake from POWER OFF restarts once, at the very top of
+// setup(), before anything runs. A deep-sleep wake brings the native USB port
+// up as a new device while the boot carries on, and with nothing on the other
+// end reading it -- a charger, or a computer with no serial monitor open --
+// the boot hung starting WiFi, every time: 10 wakes out of 10 on the 3.5"
+// (NAPTEST, 2026-10-12), and none at all with a monitor reading the port.
+// Stopping the radios before sleep, a timer-only sleep and wiping the radio
+// calibration all changed nothing. A software restart leaves the USB port as
+// it is, and the boot after one has never hung. The word carries what woke
+// it, so the boot still knows it was a wake.
+static const uint32_t WAKERESTART_MAGIC = 0x3A4E0000u;
+RTC_NOINIT_ATTR static uint32_t g_wakeRestart;
+static bool s_wokeFromOff  = false;   // this boot is POWER OFF's wake, by way of that restart
+static uint8_t s_offWakeCause = 0;
+static void takeWakeRestart() {
+    const uint32_t v = g_wakeRestart;
+    g_wakeRestart = 0;
+    s_wokeFromOff  = esp_reset_reason() == ESP_RST_SW && (v & 0xFFFFFF00u) == WAKERESTART_MAGIC;
+    s_offWakeCause = (uint8_t)(v & 0xFF);
+}
+#endif
 #if defined(TWATCH_S3)
 // The watch's radio self-heal: how many restarts in a row it has made because
 // it heard nothing at all. Same RTC-memory shape as the flags above: a magic
@@ -155,6 +178,10 @@ static void crashReportInit() {
     takeHealCount();
 #endif
     g_resetReason = r;
+#if SQW_SPEAKER
+    takeWakeRestart();
+    if (s_wokeFromOff) g_resetReason = ESP_RST_DEEPSLEEP;   // what it really was
+#endif
     const bool panicked = (r == ESP_RST_PANIC || r == ESP_RST_INT_WDT ||
                            r == ESP_RST_TASK_WDT || r == ESP_RST_WDT);
     // A magic that survived with garbage behind it -- 31 days up and 20 MB
@@ -1683,7 +1710,7 @@ static void initTouchFit() {
 // diagnostics screen's answer to "did it actually crash", the exact
 // question a live serial monitor was needed for earlier today.
 static const char* resetReasonName() {
-    switch (esp_reset_reason()) {
+    switch (g_resetReason) {
         case ESP_RST_POWERON:   return "power-on";
         case ESP_RST_SW:        return "software";
         case ESP_RST_PANIC:     return "PANIC/crash";
@@ -3647,6 +3674,115 @@ static void printBootBanner() {
 #if defined(TWATCH_S3)
 static void wardriveBegin();
 #endif
+#if SQW_SPEAKER
+// ---- the power diary ----------------------------------------------------------
+// The last sixteen power events, kept in NVS so they survive deep sleep and a
+// flat battery: every boot (with what woke it and where BOOT was), the boot
+// living to the main loop and to five and thirty seconds, a POWER OFF being
+// asked for, and the moment the board actually slept. A board that "wakes by
+// itself and dies a second later" (2026-10-11) leaves its story here.
+// POWERLOG on the console prints it, oldest first.
+//
+// A boot that BOOT woke from POWER OFF also notes each step of setup() it
+// gets past (bootStage()), because that is the boot that dies: on 2026-10-12
+// one woke, got past the black box and was never heard from again -- the
+// screen dimmed for the radios and stayed that way, and BOOT could not wake a
+// chip that was not asleep. That boot also has a minder: 30 s without
+// reaching the end of setup() and it notes where it stuck and restarts.
+enum : uint8_t { PD_BOOT = 1, PD_LOOP, PD_ALIVE5, PD_ALIVE30, PD_OFF_ASKED, PD_SLEEPING, PD_STAGE, PD_STUCK };
+struct __attribute__((packed)) PowerEvt { uint16_t seq; uint8_t ev; uint8_t boot0; uint32_t ms; uint16_t a, b; };
+static const uint8_t PD_N = 24;
+static PowerEvt s_pd[PD_N];
+static uint8_t  s_pdAt = 0;
+static uint16_t s_pdSeq = 0;
+static bool     s_pdLoaded = false;
+static void powerDiaryLoad() {
+    if (s_pdLoaded) return;
+    s_pdLoaded = true;
+    Preferences p;
+    if (!p.begin("pwrdiary", true)) return;
+    if (p.getBytesLength("ev") == sizeof s_pd) p.getBytes("ev", s_pd, sizeof s_pd);
+    s_pdAt  = p.getUChar("at", 0) % PD_N;
+    s_pdSeq = p.getUShort("seq", 0);
+    p.end();
+}
+static void powerDiaryNote(uint8_t ev, uint16_t a = 0, uint16_t b = 0) {
+    powerDiaryLoad();
+    s_pd[s_pdAt] = { s_pdSeq, ev, (uint8_t)digitalRead(0), millis(), a, b };
+    s_pdAt = (uint8_t)((s_pdAt + 1) % PD_N);
+    Preferences p;
+    if (!p.begin("pwrdiary", false)) return;
+    p.putBytes("ev", s_pd, sizeof s_pd);
+    p.putUChar("at", s_pdAt);
+    p.end();
+}
+// First thing in setup(): a new boot number, then the boot itself -- the
+// reset reason in `a`, the wake cause in `b`.
+static const char* const PD_STAGES[] = { "?", "screen", "touch + sound", "black box", "WiFi starting", "WiFi up",
+                                          "Bluetooth init", "Bluetooth scan", "SD card", "mesh", "setup done",
+                                          "WiFi mode set", "WiFi re-init", "WiFi started", "WiFi sniffer on" };
+static const uint8_t PD_STAGE_N = sizeof PD_STAGES / sizeof PD_STAGES[0];
+static volatile uint8_t  s_bootStage = 0;
+static volatile uint32_t s_stageAt   = 0;
+static volatile bool     s_setupDone = false;
+static bool              s_wakeBoot  = false;
+void bootStage(uint8_t s) {
+    s_bootStage = s;
+    s_stageAt   = millis();
+    if (s == 10) s_setupDone = true;
+    if (s_wakeBoot) powerDiaryNote(PD_STAGE, s);
+}
+// Watches for a step of setup() that never ends. Every step takes well under
+// a second on a good boot; the one after "touch + sound" can hold the update
+// check (9 s and a WiFi join), so it gets longer.
+static void wakeMinderTask(void*) {
+    while (!s_setupDone) {
+        vTaskDelay(pdMS_TO_TICKS(250));
+        const uint32_t limit = s_bootStage == 2 ? 25000 : 6000;
+        if (!s_setupDone && millis() - s_stageAt > limit) {
+            powerDiaryNote(PD_STUCK, s_bootStage);
+            esp_restart();
+        }
+    }
+    vTaskDelete(NULL);
+}
+static void powerDiaryBoot() {
+    powerDiaryLoad();
+    s_pdSeq++;
+    Preferences p;
+    if (p.begin("pwrdiary", false)) { p.putUShort("seq", s_pdSeq); p.end(); }
+    powerDiaryNote(PD_BOOT, (uint16_t)g_resetReason,
+                   (uint16_t)(s_wokeFromOff ? s_offWakeCause : esp_sleep_get_wakeup_cause()));
+    s_wakeBoot = g_resetReason == ESP_RST_DEEPSLEEP;
+    s_stageAt  = millis();
+    // On core 0, away from setup(): whatever setup() is stuck in, this still runs.
+    if (s_wakeBoot) xTaskCreatePinnedToCore(wakeMinderTask, "wakeminder", 4096, nullptr, 1, nullptr, 0);
+}
+static void powerDiaryTick(uint32_t now) {
+    static uint8_t said = 0;
+    if (said == 0) { said = 1; powerDiaryNote(PD_LOOP); }
+    if (said == 1 && now > 5000)  { said = 2; powerDiaryNote(PD_ALIVE5); }
+    if (said == 2 && now > 30000) { said = 3; powerDiaryNote(PD_ALIVE30); }
+}
+static void powerDiaryPrint() {
+    powerDiaryLoad();
+    static const char* const EV[] = { "?", "BOOT", "LOOP", "ALIVE 5s", "ALIVE 30s", "OFF ASKED", "SLEEPING", "PAST", "STUCK" };
+    Serial.println("[powerlog] oldest first: boot#, event, ms since boot, BOOT pin (0 = pressed), detail");
+    for (uint8_t i = 0; i < PD_N; i++) {
+        const PowerEvt& e = s_pd[(s_pdAt + i) % PD_N];
+        if (!e.ev) continue;
+        char d[48] = "";
+        if (e.ev == PD_BOOT) snprintf(d, sizeof d, "reset %u, wake cause %u%s", e.a, e.b, e.b == 2 ? " (BOOT pin)" : "");
+        else if (e.ev == PD_OFF_ASKED) snprintf(d, sizeof d, "%s", e.a ? "console" : "button");
+        else if (e.ev == PD_SLEEPING) snprintf(d, sizeof d, "waited %u ms for release", e.a);
+        else if (e.ev == PD_STAGE || e.ev == PD_STUCK)
+            snprintf(d, sizeof d, "%s%s", e.ev == PD_STUCK ? "after " : "", PD_STAGES[e.a < PD_STAGE_N ? e.a : 0]);
+        Serial.printf("[powerlog] #%u %-9s %7lu ms  pin %u  %s\n", e.seq, EV[e.ev < 9 ? e.ev : 0], (unsigned long)e.ms, e.boot0, d);
+    }
+}
+volatile bool g_consolePowerLog = false;
+#endif
+
 // ---- text straight at the panel ----------------------------------------------
 // Three screens write at the panel rather than into the frame: the update
 // check at boot, the calibration-reset prompt and the charge screen. On the
@@ -3684,12 +3820,29 @@ void setup() {
 #if defined(ARDUINO_ARCH_ESP32) && !defined(CROWPANEL7)
     g_frameSprite = &frame;
 #endif
+#if SQW_SPEAKER
+    // POWER OFF's wake: straight into a restart (see WAKERESTART_MAGIC).
+    // Before the breadcrumb is read, so it is still there for the boot after.
+    if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        g_wakeRestart = WAKERESTART_MAGIC | (uint8_t)esp_sleep_get_wakeup_cause();
+        esp_restart();
+    }
+#endif
     // Before anything else can allocate: the breadcrumb has to be read out
     // while it is still the previous life's, not this one's.
     crashReportInit();
     Serial.begin(SERIAL_BAUD);
+#if SQW_SPEAKER
+    // POWER OFF left BOOT's pad on the RTC side for its wake, and a pad on
+    // the RTC side reads nothing on the ordinary GPIO path. Hand it back
+    // before anything reads the button.
+    rtc_gpio_deinit(GPIO_NUM_0);
+#endif
 #if SQW_BOOT_BTN
     pinMode(0, INPUT_PULLUP);   // BOOT: see bootButtonTick()
+#endif
+#if SQW_SPEAKER
+    powerDiaryBoot();
 #endif
 #if defined(SQW_S3)
     // Native USB: with nothing reading the port, every print would otherwise
@@ -3779,6 +3932,9 @@ void setup() {
 #endif
 
     tft.init();
+#if SQW_SPEAKER
+    bootStage(1);
+#endif
 
 #if defined(CROWPANEL7_PANELTEST)
     // Bring-up only: prove the panel before anything else can be blamed for
@@ -4123,7 +4279,7 @@ void setup() {
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
     Sound::begin();                       // the codec is on the touch bus, now up
-    Serial.printf("[power] boot: %s, wake cause %d\n", resetReasonName(), (int)esp_sleep_get_wakeup_cause());
+    Serial.printf("[power] boot: %s, wake cause %d\n", resetReasonName(), (int)(s_wokeFromOff ? s_offWakeCause : esp_sleep_get_wakeup_cause()));
 #elif defined(FREENOVE_S3)
     // The Freenove S3 2.8"'s FT6336, on I2C SDA 16 / SCL 15 at 0x38, reset on
     // GPIO18 (active low). The ES8311 codec shares the bus at 0x18. FNK0104A
@@ -4164,6 +4320,9 @@ void setup() {
         touch.begin(touchSPI);
         touch.setRotation(0);
     }
+#endif
+#if SQW_SPEAKER
+    bootStage(2);
 #endif
 
     // Recovery escape hatch: hold touch ANYWHERE for ~1s right here to
@@ -4313,6 +4472,9 @@ void setup() {
         }
         BlackBox::noteBoot(br);
     }
+#if SQW_SPEAKER
+    bootStage(3);
+#endif
 
 #if defined(TWATCH_S3)
     // The wardrive log, and its GPS if wardriving was left on.
@@ -4355,6 +4517,9 @@ void setup() {
     // against a frame built by an independent implementation.
     MeshTalk::begin();
 #endif
+#if SQW_SPEAKER
+    bootStage(9);
+#endif
     applyBrightness();
     // After a wipe the board comes back the way the wipe asked: straight to the
     // main screen, unlocked, with no splash and no boot quip, after a duress
@@ -4369,6 +4534,9 @@ void setup() {
         Squachy::trigger(Squachy::Event::BOOTED, DetectionType::UNKNOWN, engine.lifetimeTotal());
         enterBoot();
     }
+#if SQW_SPEAKER
+    bootStage(10);
+#endif
 }
 
 // ---- PRIM: what each drawing primitive costs on the real sprite ----
@@ -5081,12 +5249,15 @@ static void chargeModeTick(uint32_t now) {
 // CHARGE MODE, which the long press starts on the other CYDs, stays on the
 // Settings row and the console here. POWER OFF on the console does this too.
 volatile bool g_consolePowerOff = false;
+// NAPTEST: the same POWER OFF, plus a timer that wakes it 3 s later -- the
+// wake path, repeatable from the console without a finger on BOOT.
+volatile bool g_consoleNapTest = false;
 static uint32_t s_offHeldAt = 0;      // when the long press began, 0 = not held
 static void cbdPowerOff() {
+    powerDiaryNote(PD_OFF_ASKED, (uint16_t)(g_consolePowerOff ? 1 : 0));
     // The screen first, so the board visibly goes off the instant the hold
-    // lands. No serial flush and no radio rest: the native USB flush waits
-    // for a host that may never read (the board sat frozen with the picture
-    // up, 2026-10-11), and deep sleep takes the radios down regardless.
+    // lands. No serial flush: the native USB flush waits for a host that may
+    // never read (the board sat frozen with the picture up, 2026-10-11).
     chargeBacklight(0);
     Sound::quiet();
     StatusLight::off();
@@ -5100,19 +5271,27 @@ static void cbdPowerOff() {
     tft.writecommand(0x28);
     tft.writecommand(0x10);
 #endif
+    // The radios down properly, as the T-Watch does before its heal sleep.
+    // Not the cure for the wake that hung starting WiFi (that is the restart
+    // at the top of setup(), WAKERESTART_MAGIC), but nothing is gained by
+    // sleeping with them mid-flight.
+    if (!engine.restRadios(true)) { esp_wifi_set_promiscuous(false); esp_wifi_stop(); }
     delay(120);
     // The wake is BOOT going LOW, and BOOT is LOW right now: the hold that
     // asked for this. Sleeping with it still down woke the board at once,
     // a reboot straight into the calibration prompt (2026-10-11). Wait for
     // the release, with the screen already dark, then sleep; ten seconds at
     // the most, in case the button is stuck.
+    const uint32_t waitAt = millis();
     for (uint32_t t0 = millis(); digitalRead(0) == LOW && millis() - t0 < 10000; ) delay(10);
     delay(50);
+    powerDiaryNote(PD_SLEEPING, (uint16_t)min<uint32_t>(millis() - waitAt, 65535));
     // BOOT's pull-up is the chip's own, and the ordinary GPIO pull-ups are
     // off in deep sleep: the pin floated, drifted low, and woke the board by
     // itself two seconds after it slept (the console log, 2026-10-11). The
     // RTC side of the pad has a pull-up of its own that does stay on, as
     // long as the RTC peripherals are left powered.
+    if (g_consoleNapTest) esp_sleep_enable_timer_wakeup(3000000ULL);
     rtc_gpio_pullup_en(GPIO_NUM_0);
     rtc_gpio_pulldown_dis(GPIO_NUM_0);
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
@@ -5177,7 +5356,9 @@ void loop() {
 #endif
     if (g_consoleCharge) { g_consoleCharge = false; if (s_chargeMode) exitChargeMode(); else s_chargeWanted = true; }
 #if SQW_SPEAKER
-    if (g_consolePowerOff) { g_consolePowerOff = false; cbdPowerOff(); }
+    if (g_consolePowerOff) { cbdPowerOff(); }
+    powerDiaryTick(millis());
+    if (g_consolePowerLog) { g_consolePowerLog = false; powerDiaryPrint(); }
 #endif
 #if SQW_BOOT_BTN
     // SCREEN on the console: says whether the screen is dark or dimmed and

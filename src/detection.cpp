@@ -10,6 +10,13 @@
 #include "dex.h"
 #include "regulars.h"
 #include "clock.h"
+#include "sound.h"
+#if SQW_SPEAKER
+void bootStage(uint8_t s);   // main.cpp: the power diary's steps through setup()
+#define BOOT_STAGE(n) bootStage(n)
+#else
+#define BOOT_STAGE(n) ((void)0)
+#endif
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -645,10 +652,12 @@ bool DetectionEngine::init() {
 #else
     static const bool SLIM_WIFI = true;    // A/B on the bench: 45 frames/40 s slim, 20/45 s stock
 #endif
+    BOOT_STAGE(4);
     Serial.println("[boot] starting WiFi");
     serialFlush();
     Serial.printf("[boot] heap before WiFi: %lu free, %lu largest\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     WiFi.mode(WIFI_STA);
+    BOOT_STAGE(11);
     WiFi.disconnect();
     delay(50);
     // The driver again, on a sniffer's budget. The Arduino core starts WiFi
@@ -661,6 +670,7 @@ bool DetectionEngine::init() {
     if (SLIM_WIFI) {
         esp_wifi_stop();
         esp_wifi_deinit();
+        BOOT_STAGE(12);
         // A tick between the teardown and the rebuild. On the ESP32-S3
         // (arduino-esp32 2.0.14) esp_wifi_deinit() returns before the last of
         // the teardown has run on its task, and an esp_wifi_init() in the
@@ -695,6 +705,7 @@ bool DetectionEngine::init() {
             if (sta) esp_netif_attach_wifi_station(sta);
             esp_wifi_set_mode(WIFI_MODE_STA);
             esp_wifi_start();
+            BOOT_STAGE(13);
         } else {
             Serial.printf("[boot] slim WiFi init failed (%d), back to the core's\n", (int)rc);
             WiFi.mode(WIFI_OFF);
@@ -703,6 +714,7 @@ bool DetectionEngine::init() {
     }
     Serial.printf("[boot] heap with WiFi started: %lu free, %lu largest\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     esp_wifi_set_promiscuous(true);
+    BOOT_STAGE(14);
 #if SQW_WIFI_5G
     {
         // Both bands, then ask the radio which 5 GHz channels it will tune
@@ -825,9 +837,11 @@ bool DetectionEngine::init() {
     s_bootHeap.wifiLargest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     Serial.printf("[boot] heap with WiFi up: %lu free, %lu largest\n",
                   (unsigned long)s_bootHeap.wifiFree, (unsigned long)s_bootHeap.wifiLargest);
+    BOOT_STAGE(5);
     Serial.println("[boot] starting Bluetooth");
     serialFlush();
     NimBLEDevice::init("");
+    BOOT_STAGE(6);
     NimBLEScan* scan = NimBLEDevice::getScan();
     // Passive to start, whatever the room: the first second of an active
     // scan in a crowded building is what killed a user's board. Active
@@ -873,6 +887,7 @@ bool DetectionEngine::init() {
     // scan-complete callback below are never read).
     scan->setMaxResults(0);
     scan->start(0, false, false);   // forever; not a restart
+    BOOT_STAGE(7);
     s_bootHeap.bleFree    = ESP.getFreeHeap();
     s_bootHeap.bleLargest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     Serial.printf("[boot] heap with Bluetooth up: %lu free, %lu largest\n",
@@ -887,6 +902,7 @@ bool DetectionEngine::init() {
 
     // 5. SD card (best-effort), now that the radios have what they need.
     _sd.begin();
+    BOOT_STAGE(8);
 
     return true;
 }
