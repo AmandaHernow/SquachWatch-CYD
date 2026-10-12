@@ -5037,7 +5037,8 @@ static void gpsStop() {
     gpsPower(false, false);
 }
 
-#if SQUACH_LORA
+#endif  // TWATCH_S3, for a moment: the LoRa pill is the T-Deck's too
+#if SQUACH_LORA && (defined(TWATCH_S3) || defined(TDECK_PLUS))
 // New LoRa chat messages: a pink pill at the top of the main screen, under
 // the GPS counter when that is showing, and only while there is something
 // unread. A tap opens LORA CHATS. Drawn with the GPS counter, under the
@@ -5052,7 +5053,12 @@ void twatchLoraBadge(TFT_eSPI& t) {
     t.setTextSize(Theme::uiTextSize(t, 1));
     const int w = t.textWidth(txt) + 10, h = t.fontHeight() + 6;
     const int x = (t.width() - w) / 2;
-    const int y = s_gpsOn ? 4 + h + 3 : 4;
+#if defined(TWATCH_S3)
+    const bool gpsUp = s_gpsOn;
+#else
+    const bool gpsUp = Gnss::fresh(millis());   // the CYD GPS counter sits there while it has a fix
+#endif
+    const int y = gpsUp ? 4 + h + 3 : 4;
     t.fillRoundRect(x, y, w, h, 4, Theme::BG);
     t.drawRoundRect(x, y, w, h, 4, Theme::PINK);
     t.setTextColor(Theme::PINK, Theme::BG);
@@ -5060,11 +5066,30 @@ void twatchLoraBadge(TFT_eSPI& t) {
     t.print(txt);
     s_loraBadgeX = (int16_t)x; s_loraBadgeY = (int16_t)y; s_loraBadgeW = (int16_t)w; s_loraBadgeH = (int16_t)h;
 }
+#if defined(TDECK_PLUS)
+// The T-Deck has a speaker and no buzzer: the squad's ding-dong for a new
+// LoRa chat message, under the same rules as the watch's buzz below (not
+// with the chats open, once in thirty seconds at most; play() applies the
+// SOUND setting, night and the dimmed screen).
+static void tdeckLoraSoundTick(uint32_t now) {
+    static uint32_t lastCheck = 0, lastDing = 0;
+    static uint16_t lastUnread = 0;
+    if (now - lastCheck < 1000) return;
+    lastCheck = now;
+    const uint16_t u = uiLoraChatUnread();
+    if (u > lastUnread && state != AppState::LORA_CHAT && (!lastDing || now - lastDing > 30000)) {
+        lastDing = now;
+        Sound::play(Sound::Id::MESSAGE);
+    }
+    lastUnread = u;
+}
+#endif
 // A finger's worth of slack around it: the pill is small on a watch.
 static bool twatchLoraBadgeHit(int x, int y) {
     return s_loraBadgeX >= 0 && x >= s_loraBadgeX - 8 && x < s_loraBadgeX + s_loraBadgeW + 8 &&
            y >= s_loraBadgeY - 6 && y < s_loraBadgeY + s_loraBadgeH + 8;
 }
+#if defined(TWATCH_S3)
 // One soft buzz for a new message, not while the chats are open, and not
 // more than once in thirty seconds however busy the channel is.
 static void twatchLoraBuzzTick(uint32_t now) {
@@ -5079,7 +5104,9 @@ static void twatchLoraBuzzTick(uint32_t now) {
     }
     lastUnread = u;
 }
-#endif
+#endif  // TWATCH_S3
+#endif  // SQUACH_LORA on the watch or the T-Deck
+#if defined(TWATCH_S3)   // and the watch's section carries on
 
 // While the GPS is on, a small counter at the top of the main screen: how
 // many satellites it hears, how many it uses, FIX once it has one -- and,
@@ -5820,6 +5847,8 @@ void loop() {
     Lora::tick(now);   // nothing outside a SQUACH_LORA build
 #if SQUACH_LORA && defined(TWATCH_S3)
     twatchLoraBuzzTick(now);
+#elif SQUACH_LORA && defined(TDECK_PLUS)
+    tdeckLoraSoundTick(now);
 #endif
     floodTick();   // nothing outside a FLOOD_BENCH build
     // The heap at the first pass of loop(), for DIAGNOSTICS' BOOT line.
@@ -6746,7 +6775,7 @@ void loop() {
                 lastTouch = now;
                 sqActive  = false;
                 enterMeshCompose();
-#if SQUACH_LORA && defined(TWATCH_S3)
+#if SQUACH_LORA && (defined(TWATCH_S3) || defined(TDECK_PLUS))
             } else if (touchJustDown && (now - lastTouch) > TOUCH_DEBOUNCE_MS &&
                        twatchLoraBadgeHit(tp.x, tp.y)) {
                 // The LORA pill: straight to the chats.

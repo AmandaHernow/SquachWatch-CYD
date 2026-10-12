@@ -163,6 +163,10 @@ static const SettingsRow SYSTEM_ROWS[] = {
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || defined(MARAUDER_V8) || defined(TDECK_PLUS)
     SettingsRow::BOARD_BATTERY,
 #endif
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    // The T-Deck's LoRa radio: the watch's two rows, on the page it has.
+    SettingsRow::WATCH_LORA_CHATS, SettingsRow::WATCH_LORA,
+#endif
 #if defined(ESP32) && !defined(TWATCH_S3)
     SettingsRow::LAST_RUN,
 #endif
@@ -316,7 +320,11 @@ static const char* groupName(RowGroupId g) {
         case RowGroupId::SQUACHY:    return "SQUACHY";
         case RowGroupId::DESK:       return "DESK";
         case RowGroupId::SQUAD:      return "SQUAD";
+#if defined(TDECK_PLUS)
+        case RowGroupId::WATCH:      return "LORA";    // the T-Deck has the watch's LoRa rows and nothing else of the watch's
+#else
         case RowGroupId::WATCH:      return "WATCH";
+#endif
         default:                     return "SYSTEM";
     }
 }

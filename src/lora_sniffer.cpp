@@ -410,8 +410,8 @@ bool begin() {
 #if defined(LORA_PROBE)
     s_mode = Mode::FOCUS;   // the bench parks; the survey is for the field
 #endif
-#if defined(TWATCH_S3)
-    // The watch has no sysop screen: its one knob is which networks.
+#if defined(TWATCH_S3) || defined(TDECK_PLUS)
+    // The watch (and the T-Deck) has no sysop screen: its one knob is which networks.
     applyListen(Settings::loraListen());
 #endif
 
@@ -434,10 +434,11 @@ bool begin() {
     else
         Serial.printf("[lora] no PSRAM for the survey%s or the message ring%s -- both are off\n",
                       surveyBytes ? " (it has its block)" : "", msgBytes ? " (it has its block)" : "");
-#if defined(TWATCH_S3)
+#if defined(TWATCH_S3) || defined(TDECK_PLUS)
     // The watch's WiFi sniffer and Bluetooth scan keep core 0 busy, and a
     // late turn here is a missed MeshCore preamble (65 ms in all). Core 1
-    // is the UI's, at priority 1; this task mostly sleeps on DIO1.
+    // is the UI's, at priority 1; this task mostly sleeps on DIO1. The
+    // T-Deck is the same chip with the same radios, so the same seat.
     xTaskCreatePinnedToCore(task, "lora", 6144, nullptr, 3, &s_task, 1);
 #else
     xTaskCreatePinnedToCore(task, "lora", 6144, nullptr, 2, &s_task, 0);

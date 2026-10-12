@@ -21,8 +21,27 @@
 #define LORA_PIN_BUSY  7
 static SPIClass s_loraSpi(HSPI);
 #define LORA_SPI s_loraSpi
+#elif defined(TDECK_PLUS)
+// The T-Deck Plus's SX1262 sits on the DISPLAY's bus (SCK 40, MISO 38, MOSI
+// 41), beside the SD card, and the display is pushed by a DMA task of its
+// own. So the radio talks through TFT_eSPI's SPI instance, never begins the
+// bus itself, and every transaction takes FramePush::busLock() first (the
+// LockedHal below), which waits for a push in flight and holds the next one
+// off. Pins from LilyGo's utilities.h.
+#include <TFT_eSPI.h>
+#include "frame_push.h"
+extern TFT_eSPI tft;
+#define LORA_PIN_NSS   9
+#define LORA_PIN_DIO1  45
+#define LORA_PIN_RST   17
+#define LORA_PIN_BUSY  13
+#define LORA_SPI tft.getSPIinstance()
+#define LORA_SHARED_BUS 1
 #else
 #error "SQUACH_LORA on a board with no LoRa pins"
+#endif
+#ifndef LORA_SHARED_BUS
+#define LORA_SHARED_BUS 0
 #endif
 #include <RadioLib.h>
 #include <freertos/FreeRTOS.h>
@@ -42,6 +61,19 @@ public:
     uint16_t devErrors()  { return getDeviceErrors(); }
     int16_t  clearErrors() { return clearDeviceErrors(); }
 };
+
+#if LORA_SHARED_BUS
+// RadioLib's Arduino HAL with the display bus's lock around each transaction.
+// RadioLib brackets every register exchange in spiBeginTransaction() ..
+// spiEndTransaction(), from whichever task asks (the loop's tick and the
+// DIO1 worker both do), so this is the one place the sharing has to be right.
+class LockedHal : public ArduinoHal {
+public:
+    using ArduinoHal::ArduinoHal;
+    void spiBeginTransaction() override { FramePush::busLock(); ArduinoHal::spiBeginTransaction(); }
+    void spiEndTransaction() override   { ArduinoHal::spiEndTransaction(); FramePush::busUnlock(); }
+};
+#endif
 
 Sx1262Open*        s_radio  = nullptr;
 SemaphoreHandle_t  s_irqSem = nullptr;
@@ -83,6 +115,9 @@ bool resetAndWaitBusy() {
 // RadioLib has been told anything. Opcode, 16-bit address, one NOP for the
 // status byte, then the data.
 void rawVersion(char out[17]) {
+#if LORA_SHARED_BUS
+    FramePush::busLock();
+#endif
     LORA_SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
     digitalWrite(LORA_PIN_NSS, LOW);
     LORA_SPI.transfer(0x1D);
@@ -95,6 +130,9 @@ void rawVersion(char out[17]) {
     }
     digitalWrite(LORA_PIN_NSS, HIGH);
     LORA_SPI.endTransaction();
+#if LORA_SHARED_BUS
+    FramePush::busUnlock();
+#endif
     out[16] = '\0';
 }
 
@@ -106,7 +144,9 @@ bool begin(BringUp& r) {
     memset(&s_up, 0, sizeof s_up);
     if (!s_irqSem) s_irqSem = xSemaphoreCreateBinary();
 
+#if !LORA_SHARED_BUS
     LORA_SPI.begin(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI, LORA_PIN_NSS);
+#endif
     pinMode(LORA_PIN_NSS, OUTPUT);
     digitalWrite(LORA_PIN_NSS, HIGH);
 
@@ -118,7 +158,11 @@ bool begin(BringUp& r) {
                   s_up.chipFound ? "an SX126x" : "no module (K1 on the card or speaker?)");
     if (!s_up.chipFound) { r = s_up; return false; }
 
+#if LORA_SHARED_BUS
+    if (!s_radio) s_radio = new Sx1262Open(new Module(new LockedHal(LORA_SPI), LORA_PIN_NSS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY));
+#else
     if (!s_radio) s_radio = new Sx1262Open(new Module(LORA_PIN_NSS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, LORA_SPI));
+#endif
 
     // The TCXO's voltage is not documented for this module (docs/LORA.md
     // section 1): Elecrow's S3 code says 3.3 V, their P4 code 1.6 V, and

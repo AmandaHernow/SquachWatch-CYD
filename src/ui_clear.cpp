@@ -1912,9 +1912,11 @@ static void drawBatteryGauge(TFT_eSPI& t, uint32_t now) {
 
 #if defined(TWATCH_S3)
 void twatchGpsBadge(TFT_eSPI& t);   // main.cpp: the GPS counter, top centre, while the GPS is on
-#if SQUACH_LORA
+#endif
+#if SQUACH_LORA && (defined(TWATCH_S3) || defined(TDECK_PLUS))
 void twatchLoraBadge(TFT_eSPI& t);  // main.cpp: LORA n NEW, under it, while chats are unread
 #endif
+#if defined(TWATCH_S3)
 static int16_t drawCornerClock(TFT_eSPI& t, int w) {
     if (!Clock::trusted()) return -1;
     char tm[8];
@@ -3419,6 +3421,9 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
 #endif
 #if defined(CYD_GPS)
     if (DrawBand::has(0, titleBottom)) s_cornerClockPillR = drawGpsLabel(t, w);
+#endif
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    twatchLoraBadge(t);   // LORA n NEW, under the GPS label, under the bubbles
 #endif
     // Everything from here that moves by the call, not by the clock, moves
     // on the mascot's clock. See uiMascotStep().
