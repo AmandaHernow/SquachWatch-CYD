@@ -265,6 +265,10 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
 #define SQW_PUSH_DMA 0
 #endif
 #if SQW_PUSH_DMA
+// Set by busWant(), cleared when the waiter takes the lock; read by the SPI
+// push (pushRowsDma) to step aside mid-frame. Here, not beside that push,
+// because the QSPI board has no such push and still defines busWant().
+static volatile bool s_busWanted = false;
 static uint16_t* s_bounce[2] = { nullptr, nullptr };
 static int32_t   s_bounceW  = 0;
 static int8_t    s_dmaState = 0;             // 0 untried, 1 on, -1 not available
@@ -395,7 +399,6 @@ static bool pushDma(TFT_eSPI& tft, int32_t w) {
 // this bus has a preamble to catch, and the ~30 ms of a whole frame was too
 // long to wait (the T-Deck heard MeshCore's preambles and missed every
 // header, 2026-10-12); a chunk is about a millisecond.
-static volatile bool s_busWanted = false;
 static void busStepAside();   // below, with the bus mutex it hands over
 static int32_t pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows) {
     (void)tft;
