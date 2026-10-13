@@ -24,18 +24,24 @@ static SPIClass s_loraSpi(HSPI);
 #elif defined(TDECK_PLUS)
 // The T-Deck Plus's SX1262 sits on the DISPLAY's bus (SCK 40, MISO 38, MOSI
 // 41), beside the SD card, and the display is pushed by a DMA task of its
-// own. So the radio talks through TFT_eSPI's SPI instance, never begins the
-// bus itself, and every transaction takes FramePush::busLock() first (the
-// LockedHal below), which waits for a push in flight and holds the next one
-// off. Pins from LilyGo's utilities.h.
-#include <TFT_eSPI.h>
+// own through the IDF's SPI master driver. The radio goes through that same
+// driver, as a second device on the same host (SharedHal below): the driver
+// reprograms the host every time the two swap, so nothing the radio sets
+// leaks into a frame. Talking through the Arduino SPIClass instead left the
+// host in a state the DMA pushes completed through without a pixel landing,
+// and the screen froze with the firmware running (2026-10-12). Every
+// transaction still takes FramePush::busLock() first, which waits for a push
+// in flight and holds the next one off. Pins from LilyGo's utilities.h.
 #include "frame_push.h"
-extern TFT_eSPI tft;
+#include <TFT_eSPI.h>
+#include <driver/spi_master.h>
+extern TFT_eSPI tft;                 // main.cpp's; for initDMA() (sharedDev below)
 #define LORA_PIN_NSS   9
 #define LORA_PIN_DIO1  45
 #define LORA_PIN_RST   17
 #define LORA_PIN_BUSY  13
-#define LORA_SPI tft.getSPIinstance()
+#define LORA_SPI SPI                 // not used on this board; the device below is
+#define LORA_IDF_HOST SPI2_HOST      // TFT_eSPI's host on an S3 without USE_HSPI_PORT
 #define LORA_SHARED_BUS 1
 #else
 #error "SQUACH_LORA on a board with no LoRa pins"
@@ -63,15 +69,58 @@ public:
 };
 
 #if LORA_SHARED_BUS
-// RadioLib's Arduino HAL with the display bus's lock around each transaction.
-// RadioLib brackets every register exchange in spiBeginTransaction() ..
-// spiEndTransaction(), from whichever task asks (the loop's tick and the
-// DIO1 worker both do), so this is the one place the sharing has to be right.
-class LockedHal : public ArduinoHal {
+// The radio as a device of the IDF SPI master driver, on the display's host
+// (TFT_eSPI's initDMA() set the host up; the frame push task runs before the
+// radio starts). 8 MHz, mode 0, the chip select left to RadioLib, which
+// drives NSS itself around each exchange.
+static spi_device_handle_t s_dev = nullptr;
+static bool sharedDev() {
+    if (s_dev) return true;
+    spi_device_interface_config_t d = {};
+    d.mode           = 0;
+    d.clock_speed_hz = 8000000;
+    d.spics_io_num   = -1;
+    d.queue_size     = 1;
+    // The radio starts before the first frame goes out, and it is the first
+    // push that has TFT_eSPI set the host up for DMA. Set it up now instead
+    // (the push finds it done, see pushDma()) and add the device to it.
+    if (!tft.DMA_Enabled) tft.initDMA(false);
+    return spi_bus_add_device(LORA_IDF_HOST, &d, &s_dev) == ESP_OK;
+}
+// One exchange, full duplex, through word-aligned internal buffers (the bus
+// is a DMA bus; the driver copies anything it cannot DMA from). The caller
+// holds the bus lock and the chip select.
+static bool sharedXfer(const uint8_t* out, uint8_t* in, size_t len) {
+    static uint8_t txb[300] __attribute__((aligned(4)));
+    static uint8_t rxb[300] __attribute__((aligned(4)));
+    if (len == 0 || len > sizeof txb || !sharedDev()) return false;
+    if (out) memcpy(txb, out, len); else memset(txb, 0, len);
+    spi_transaction_t t = {};
+    t.length    = len * 8;
+    t.tx_buffer = txb;
+    t.rx_buffer = rxb;
+    // Queued and interrupt-driven, the way the frame push's own transfers
+    // go: a polling transaction spun forever in the driver's "is it done"
+    // loop at priority 3 on core 1 and starved the loop (2026-10-12).
+    const esp_err_t e = spi_device_transmit(s_dev, &t);
+    if (e != ESP_OK) { Serial.printf("[lora] SPI exchange failed (%d)\n", (int)e); return false; }
+    if (in) memcpy(in, rxb, len);
+    return true;
+}
+// RadioLib's Arduino HAL for the pins and timing, with the SPI side replaced:
+// the display bus's lock around each transaction, and the exchange itself
+// through the shared device above. RadioLib brackets every register
+// exchange in spiBeginTransaction() .. spiEndTransaction(), from whichever
+// task asks (the loop's tick and the DIO1 worker both do), so this is the
+// one place the sharing has to be right.
+class SharedHal : public ArduinoHal {
 public:
     using ArduinoHal::ArduinoHal;
-    void spiBeginTransaction() override { FramePush::busLock(); ArduinoHal::spiBeginTransaction(); }
-    void spiEndTransaction() override   { ArduinoHal::spiEndTransaction(); FramePush::busUnlock(); }
+    void spiBegin() override {}
+    void spiEnd() override {}
+    void spiBeginTransaction() override { FramePush::busWant(); FramePush::busLock(); }
+    void spiTransfer(uint8_t* out, size_t len, uint8_t* in) override { sharedXfer(out, in, len); }
+    void spiEndTransaction() override   { FramePush::busUnlock(); }
 };
 #endif
 
@@ -116,8 +165,17 @@ bool resetAndWaitBusy() {
 // status byte, then the data.
 void rawVersion(char out[17]) {
 #if LORA_SHARED_BUS
+    uint8_t tx[20] = { 0x1D, 0x03, 0x20, 0x00 }, rx[20] = { 0 };
     FramePush::busLock();
-#endif
+    digitalWrite(LORA_PIN_NSS, LOW);
+    sharedXfer(tx, rx, sizeof tx);
+    digitalWrite(LORA_PIN_NSS, HIGH);
+    FramePush::busUnlock();
+    for (int i = 0; i < 16; i++) {
+        const uint8_t c = rx[4 + i];
+        out[i] = (c >= 0x20 && c < 0x7F) ? (char)c : (c ? '.' : '\0');
+    }
+#else
     LORA_SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
     digitalWrite(LORA_PIN_NSS, LOW);
     LORA_SPI.transfer(0x1D);
@@ -130,8 +188,6 @@ void rawVersion(char out[17]) {
     }
     digitalWrite(LORA_PIN_NSS, HIGH);
     LORA_SPI.endTransaction();
-#if LORA_SHARED_BUS
-    FramePush::busUnlock();
 #endif
     out[16] = '\0';
 }
@@ -159,7 +215,9 @@ bool begin(BringUp& r) {
     if (!s_up.chipFound) { r = s_up; return false; }
 
 #if LORA_SHARED_BUS
-    if (!s_radio) s_radio = new Sx1262Open(new Module(new LockedHal(LORA_SPI), LORA_PIN_NSS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY));
+    // The global SPI object is handed over for the type only: SharedHal never
+    // begins it or sends through it.
+    if (!s_radio) s_radio = new Sx1262Open(new Module(new SharedHal(SPI), LORA_PIN_NSS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY));
 #else
     if (!s_radio) s_radio = new Sx1262Open(new Module(LORA_PIN_NSS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, LORA_SPI));
 #endif

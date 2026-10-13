@@ -434,11 +434,13 @@ bool begin() {
     else
         Serial.printf("[lora] no PSRAM for the survey%s or the message ring%s -- both are off\n",
                       surveyBytes ? " (it has its block)" : "", msgBytes ? " (it has its block)" : "");
-#if defined(TWATCH_S3) || defined(TDECK_PLUS)
+#if defined(TWATCH_S3)
     // The watch's WiFi sniffer and Bluetooth scan keep core 0 busy, and a
     // late turn here is a missed MeshCore preamble (65 ms in all). Core 1
-    // is the UI's, at priority 1; this task mostly sleeps on DIO1. The
-    // T-Deck is the same chip with the same radios, so the same seat.
+    // is the UI's, at priority 1; this task mostly sleeps on DIO1. (Not the
+    // T-Deck: its radio shares the display's bus, so every hop is a dozen
+    // bus transactions, and on core 1 above the loop that took the frame
+    // rate from 43 to 23 and tore the picture, 2026-10-12.)
     xTaskCreatePinnedToCore(task, "lora", 6144, nullptr, 3, &s_task, 1);
 #else
     xTaskCreatePinnedToCore(task, "lora", 6144, nullptr, 2, &s_task, 0);
@@ -1479,6 +1481,15 @@ bool console(const char* line) {
     // the no-module gate.
     if (strncasecmp(a, "CHAN", 4) == 0) return channelConsole(a + 4);
     if (strcasecmp(a, "LOOKUPS") == 0) { lookupsConsole(); return true; }
+    if (strncasecmp(a, "LISTEN", 6) == 0) {
+        // LORA LISTEN 0|1|2|3: the Settings row from the bench -- off,
+        // Meshtastic, MeshCore, both. For the night a board's screen froze
+        // with the radio on a shared bus (the T-Deck, 2026-10-12).
+        const int v = atoi(a + 6);
+        Settings::setLoraListen((uint8_t)(v < 0 ? 0 : v > 3 ? 3 : v));
+        applyListen(Settings::loraListen());
+        return true;
+    }
     if (strncasecmp(a, "REGION", 6) == 0) {
         const char* v = a + 6; while (*v == ' ') v++;
         uint8_t r = 255;

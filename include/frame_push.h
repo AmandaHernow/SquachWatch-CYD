@@ -186,6 +186,9 @@ bool asyncBegin(TFT_eSPI& tft);
 bool asyncSubmit(const uint8_t* src, int32_t w, int32_t h, int32_t x, int32_t y);
 void asyncWait();                 // until the panel holds the last frame handed over
 bool asyncOn();
+// Before busLock() from something that cannot wait a whole frame (the LoRa
+// radio): a push in flight finishes its current chunk and steps aside.
+void busWant();
 void busLock();
 void busUnlock();
 

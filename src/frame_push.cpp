@@ -368,7 +368,9 @@ static bool pushDma(TFT_eSPI& tft, int32_t w) {
         Serial.println("[push] DMA: no room for the bounce buffers; the plain push stays");
         return false;
     }
-    if (!tft.initDMA(false)) {
+    // initDMA() says no when it has already been done -- which it has on the
+    // T-Deck, whose LoRa radio shares this bus and set it up first.
+    if (!tft.initDMA(false) && !tft.DMA_Enabled) {
         Serial.println("[push] DMA: the driver would not start; the plain push stays");
         return false;
     }
@@ -387,8 +389,17 @@ static bool pushDma(TFT_eSPI& tft, int32_t w) {
 // printed. This pass goes through the driver's POLLING transmit instead --
 // no interrupt, the driver spins on the hardware itself -- and says where it
 // is, to tell "the transfer never starts" from "the interrupt never comes".
-static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows) {
+// Returns the rows sent. Fewer than asked when something else asked for the
+// bus (busWant()): the chunk in flight finishes, the rest waits -- the caller
+// steps aside and sets the window again for what is left. A LoRa radio on
+// this bus has a preamble to catch, and the ~30 ms of a whole frame was too
+// long to wait (the T-Deck heard MeshCore's preambles and missed every
+// header, 2026-10-12); a chunk is about a millisecond.
+static volatile bool s_busWanted = false;
+static void busStepAside();   // below, with the bus mutex it hands over
+static int32_t pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows) {
     (void)tft;
+    int32_t pushed = 0;
     // Queued, interrupt-driven, and pipelined: this chunk converts into one
     // bounce buffer while the one before is on the wire from the other, and
     // the wait for each is a block, not a spin -- the task sleeping here is
@@ -433,7 +444,9 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
         inFlight = true;
         p += px;
         rows -= n;
+        pushed += n;
         k++;
+        if (s_busWanted && rows > 0) break;   // the radio is waiting: let it in after this chunk
     }
     if (inFlight) { spi_transaction_t* done = nullptr; spi_device_get_trans_result(dmaHAL, &done, portMAX_DELAY); }
 #if defined(NM_CYD_C5)
@@ -449,6 +462,7 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
     // On the S3 the library's own post-transfer callback (dma_end_callback in
     // its S3 processor port) clears SPI_DMA_CONF_REG after every transaction,
     // so its register-fed writes work again without any help from here.
+    return pushed;
 }
 #endif  // !SQW_PUSH_QSPI
 #endif  // SQW_PUSH_DMA
@@ -598,8 +612,24 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
 #endif
 #if SQW_PUSH_DMA && !SQW_PUSH_QSPI
             if (dma) {
-                pushRowsDma(tft, src + (size_t)r0 * (size_t)w, w, r1 - r0);
-                s_lastRows += r1 - r0;
+                int32_t at = r0;
+                while (at < r1) {
+                    const int32_t did = pushRowsDma(tft, src + (size_t)at * (size_t)w, w, r1 - at);
+                    s_lastRows += did;
+                    at += did;
+                    if (did == 0 || at >= r1) break;
+                    // Stepping aside: the bus and the panel's select released,
+                    // the lock handed over for as long as the other side needs
+                    // it, then everything taken back and the window set for
+                    // the rows still to go. Only when this task holds the lock
+                    // (the pusher); a caller pushing synchronously carries on.
+                    spi_device_release_bus(dmaHAL);
+                    tft.endWrite();
+                    busStepAside();
+                    tft.startWrite();
+                    spi_device_acquire_bus(dmaHAL, portMAX_DELAY);   // the driver takes no other wait
+                    tft.setAddrWindow(x, y + at, w, r1 - at);
+                }
                 continue;
             }
 #endif
@@ -713,9 +743,24 @@ void asyncWait() {
     xSemaphoreGive(s_done);
 }
 
-void busLock()   { if (s_bus) xSemaphoreTakeRecursive(s_bus, portMAX_DELAY); }
+// The pusher, mid-frame, letting a waiter in: the lock given up, a yield so
+// the waiter (the same priority) gets the core, and the lock taken back,
+// which blocks until the waiter is done. Only when this task holds it: a
+// synchronous push from the loop carries on.
+static void busStepAside() {
+    if (!s_bus || xSemaphoreGetMutexHolder(s_bus) != xTaskGetCurrentTaskHandle()) return;
+    xSemaphoreGiveRecursive(s_bus);
+    taskYIELD();
+    if (xSemaphoreTakeRecursive(s_bus, pdMS_TO_TICKS(500)) != pdTRUE) {
+        Serial.printf("[push] step-aside: the lock did not come back in 500 ms (holder %p)\n", (void*)xSemaphoreGetMutexHolder(s_bus));
+        xSemaphoreTakeRecursive(s_bus, portMAX_DELAY);
+    }
+}
+void busWant()   { s_busWanted = true; }
+void busLock()   { if (s_bus) xSemaphoreTakeRecursive(s_bus, portMAX_DELAY); s_busWanted = false; }
 void busUnlock() { if (s_bus) xSemaphoreGiveRecursive(s_bus); }
 #else
+void busWant() {}
 bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }
 bool asyncSubmit(const uint8_t*, int32_t, int32_t, int32_t, int32_t) { return false; }
@@ -740,6 +785,7 @@ bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }
 bool asyncSubmit(const uint8_t*, int32_t, int32_t, int32_t, int32_t) { return false; }
 void asyncWait() {}
+void busWant() {}
 void busLock() {}
 void busUnlock() {}
 

@@ -382,6 +382,7 @@ void cycleLoraListen() {
     s_loraListen = NEXT[s_loraListen & 3];
     s_prefs.putUChar("loraLstn", s_loraListen);
 }
+void setLoraListen(uint8_t v) { s_loraListen = v & 3; s_prefs.putUChar("loraLstn", s_loraListen); }
 const char* loraListenName() {
     static const char* const N[4] = { "OFF", "MESHTASTIC", "MESHCORE", "BOTH" };
     return N[s_loraListen & 3];
