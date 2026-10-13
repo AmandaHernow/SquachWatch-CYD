@@ -15,9 +15,10 @@ are collected in [Measure first](#10-measure-first), and the ones a bench
 session on 2026-09-26 answered are marked there as answered, with the reading
 that answered them.
 
-Everything after the next section is about the CrowPanel. The T-Watch S3 and
-S3 Plus use the same radio driver and decoders in a much smaller package, and
-that is the next section.
+Everything after the next two sections is about the CrowPanel. The T-Watch
+S3 and S3 Plus use the same radio driver and decoders in a much smaller
+package, and so does the LilyGo T-Deck Plus, which can also send; those are
+the next two sections.
 
 ## On the T-Watch S3 and S3 Plus
 
@@ -49,6 +50,32 @@ Since v1.26.0 both watches listen to LoRa as well as WiFi and Bluetooth.
 
 The radio driver and every decoder came from DH5DAX's CrowPanel work. On the
 bench it caught 26 of 26 test messages across both networks.
+
+## On the LilyGo T-Deck Plus
+
+Since v1.37.0 the T-Deck listens the way the watches do, and because it has
+a keyboard, it can also **send**.
+
+- **Listening:** the same networks, presets, band choice, pill and **LORA
+  CHATS** as the watches. Settings > SYSTEM > **LORA** cycles BOTH,
+  MESHTASTIC, MESHCORE and OFF.
+- **BOTH favours Meshtastic.** Taking turns, the T-Deck catches most
+  Meshtastic messages but only about one MeshCore message in four: MeshCore
+  announces each message for 65 ms, and the turn often comes round too late.
+  For MeshCore, pick MESHCORE.
+- **Sending:** Settings > SYSTEM > **LORA TX** is OFF until you change it,
+  then 10 dBm or 20 dBm (14 dBm at most in the EU band). In LORA CHATS, type
+  on the keyboard and press Enter: the text goes out on the open tab's
+  network. Meshtastic: the public LongFast channel under its published key,
+  from a node number made from the board's own address. MeshCore: the Public
+  channel, as *your squad nickname*: *your text* (SQUACHY when no nickname is
+  set). Your message appears in the list as YOU.
+- **What sending means:** these are public channels. Anyone nearby with a
+  Meshtastic or MeshCore radio reads what you send, and anyone can claim any
+  name on them, you included.
+- **Why the screen does not mind:** the radio shares the screen's wires. Its
+  bytes go out between frames through the screen's own SPI path, with only
+  the speed changed for its turn (src/lora_radio.cpp, the T-Deck branch).
 
 ## What is built
 

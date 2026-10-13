@@ -32,6 +32,18 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.37.0 "Video Killed the Radio Star", 320x240: the igloo crossing SNOWFALL with two
+    # eyes in its door, then M3@ty out beside Squachy (--pet 6) talking, eating
+    # a catch (SQUACHSIM_CLIPCATCH drops one in), the hot dog (SQUACHSIM_MEATY=1),
+    # a throw hard enough to split him in three, and the igloo hide (=0).
+    "video-killed-the-radio-star": [
+        ("clear", 105, 70, ["--noseed", "--bg", "7"], {"SQUACHSIM_BATT": "80"}, 1500, "SOMEBODY LIVES IN THAT IGLOO. KNOCK THREE TIMES."),
+        ("clear", 40, 90, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_BATT": "80"}, 1500, "MEET M3@TY. HE'S HELPING. YOU JUST CAN'T TELL YET."),
+        ("clear", 40, 80, ["--noseed", "--bg", "0", "--pet", "6"], {"SQUACHSIM_CLIPCATCH": "0"}, 1500, "HE EATS EVERY CATCH. PLEASE STOP EATING THE EVIDENCE."),
+        ("clear", 40, 90, ["--noseed", "--bg", "5", "--pet", "6"], {"SQUACHSIM_MEATY": "1"}, 1300, "YOU WANNA SEE A HOT DOG? HE CAN DO A HOT DOG."),
+        ("clear", 40, 100, ["--noseed", "--bg", "5", "--pet", "6"], {"SQUACHSIM_THROW": "c:-1:0:-150:-120"}, 1800, "THROW HIM. OKAY, NOW THERE'S THREE OF HIM."),
+        ("clear", 40, 80, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "0"}, 1500, "SCARE HIM AND HE'S AN IGLOO. NOBODY'S HOME."),
+    ],
     # v1.36.0 "Highway to the Danger Zone", at the Marauder V8's 320x240: the
     # GPS fix on the main screen over SYNTHWAVE (--gps feeds the sample's
     # fix, at a Sydney Harbour landmark; the battery lamp at its new double

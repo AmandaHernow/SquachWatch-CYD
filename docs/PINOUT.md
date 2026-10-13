@@ -200,7 +200,7 @@ board 2026-10-12. The console is the native USB port.
 | Battery | GPIO 4 through a 1:2 divider |
 | Power enable | GPIO 10, HIGH or nothing past the chip has power on battery |
 | Trackball | GPIO 3, 2, 15, 1; centre button GPIO 0 (not used yet) |
-| SX1262 LoRa | CS 9, DIO1 45, RST 17, BUSY 13, on the display's bus; TCXO 1.8 V (not used yet) |
+| SX1262 LoRa | CS 9, DIO1 45, RST 17, BUSY 13, on the display's bus; TCXO 1.8 V. Its bytes go out through the panel's own SPI registers between frames (src/lora_radio.cpp) |
 
 Not used: 43 (GPS RX), 46 (keyboard INT, polled instead), 48/21/47/14 (the
 ES7210 microphones), 19/20 (USB).
