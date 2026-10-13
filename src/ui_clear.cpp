@@ -1762,22 +1762,21 @@ static uint16_t lampRainbow(uint16_t deg) {
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-// Where the lamp goes: s is the size of one art pixel, (ox, oy) its top left.
-// Small screens: under the menu icon, centred in the space left of the
-// counters. The 3.5in draws it triple size (asked for 2026-10-10), under the
+// Where the lamp goes: h2 is the size of one art pixel in HALF pixels (so it
+// can be 1.5), and (ox, oy) the top left of its outline. Small screens: under
+// the menu icon. The 3.5in draws it triple size (asked for 2026-10-10), under the
 // menu icon in both orientations. Portrait's two-line speech bubble overlaps
 // the side of the glass, and that is wanted: the bubble is drawn later and
 // sits on top, like any other bubble over the background.
 // The 320-wide boards draw it double, hard against the left edge (asked for
 // 2026-10-12, on the Marauder V8); the art's outline column is x -1, so ox = s
-// puts that on pixel 0. The watches' 240 stay as they were.
-static void lampPlace(TFT_eSPI& t, int& s, int& ox, int& oy) {
-    oy = Theme::TITLE_ICON_BAND_H + 3;
-    if (!Theme::large()) {
-        if (t.width() >= 320) { s = 2; ox = 2; return; }
-        s = 1; ox = 17; return;
-    }
-    s = 3; ox = 3;
+// puts that on pixel 0. The 240-wide screens go hard against the left edge
+// too, and the watches draw it one and a half times (both asked for
+// 2026-10-13, on the T-Watch); the 135-row sticks keep it as drawn.
+static void lampPlace(TFT_eSPI& t, int& h2, int& ox, int& oy) {
+    h2 = Theme::large() ? 6 : t.width() >= 320 ? 4 : Theme::compact() ? 2 : 3;
+    ox = 0;
+    oy = Theme::TITLE_ICON_BAND_H + 3 - h2 / 2;     // art row 0 where it always was
 }
 
 static void drawLavaLamp(TFT_eSPI& t, uint32_t now, uint8_t L, bool chg) {
@@ -1877,16 +1876,20 @@ static void drawLavaLamp(TFT_eSPI& t, uint32_t now, uint8_t L, bool chg) {
         col[gy][gx] = (y >= 3 && y <= 14 && 14 - y < n) ? glow : TFT_BLACK;
     }
 
-    int s, ox, oy;
-    lampPlace(t, s, ox, oy);
+    int h2, ox, oy;
+    lampPlace(t, h2, ox, oy);
+    // Each art pixel's edges land on whole pixels, so at 1.5 the rows and
+    // columns come out 1 and 2 pixels by turns, with no gaps.
     for (int gy = 0; gy < GH; gy++) {
+        const int y0 = oy + (gy * h2 >> 1), y1 = oy + ((gy + 1) * h2 >> 1);
         int gx = 0;
         while (gx < GW) {
             if (!kind[gy][gx]) { gx++; continue; }
             const uint16_t c = col[gy][gx];
             int run = 1;
             while (gx + run < GW && kind[gy][gx + run] && col[gy][gx + run] == c) run++;
-            t.fillRect(ox + (gx - 1) * s, oy + (gy - 1) * s, run * s, s, c);
+            const int x0 = ox + (gx * h2 >> 1), x1 = ox + ((gx + run) * h2 >> 1);
+            t.fillRect(x0, y0, x1 - x0, y1 - y0, c);
             gx += run;
         }
     }
@@ -1905,9 +1908,9 @@ static void drawBatteryGauge(TFT_eSPI& t, uint32_t now) {
         if (pct > 100) pct = 100;
     }
     if (!has) return;
-    int s, ox, oy;
-    lampPlace(t, s, ox, oy);
-    if (DrawBand::has(oy - s, oy + 20 * s)) drawLavaLamp(t, now, pct, chg);
+    int h2, ox, oy;
+    lampPlace(t, h2, ox, oy);
+    if (DrawBand::has(oy, oy + (21 * h2 >> 1))) drawLavaLamp(t, now, pct, chg);
 }
 
 #if defined(TWATCH_S3)
