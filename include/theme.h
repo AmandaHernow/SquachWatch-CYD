@@ -108,6 +108,9 @@ namespace Theme {
 
     // Linear blend between two RGB565 colors. t is 0..256 (8.8 fixed).
     uint16_t blend(uint16_t a, uint16_t b, uint16_t t);
+    // Sine in whole numbers: a 16-bit turn in, -256..256 out. For the boards
+    // with no floating-point unit (the ESP32-C5s); costs the others nothing.
+    int isin256(uint16_t a);
     // Black or white, whichever reads on `fill`. A selected button or tab is
     // filled with PURPLE and used to keep a white label whatever the theme;
     // GH0ST's PURPLE is near white, and three other themes' are pale enough
@@ -564,6 +567,9 @@ namespace Theme {
     // consume-once contract as the three above; main.cpp turns it into the
     // PARKA unlock.
     bool consumeLodgeKnock();
+    // True once, after three knocks on the igloo that goes by in the SNOWFALL
+    // snow. Same contract; main.cpp turns it into Squachy::unlockMeaty().
+    bool consumeIglooKnock();
     // True once, after the owl on the FIRE background was tapped while asking
     // WHAT REEKS?! (every third time he speaks). main.cpp turns it into
     // Squachy::unlockShambler().

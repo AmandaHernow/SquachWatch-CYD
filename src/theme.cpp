@@ -2869,7 +2869,7 @@ static uint16_t ditherRGBi(TFT_eSPI& t, int r, int g, int b, uint8_t cell) {
 // those was a few hundred instructions of software arithmetic, and the
 // tank drew at eight frames a second (bg 77 ms, 2026-10-02). The Xtensa
 // boards have the unit and never noticed; this costs them nothing either.
-static int isin256(uint16_t a) {
+int isin256(uint16_t a) {   // in theme.h too: the pets use it
     static const uint16_t Q[65] = {
           0,   6,  13,  19,  25,  31,  38,  44,  50,  56,  62,  68,  74,  80,  86,  92,
          98, 104, 109, 115, 121, 126, 132, 137, 142, 147, 152, 157, 162, 167, 172, 177,
@@ -4821,6 +4821,17 @@ static uint32_t s_lodgeAt = 0;
 static uint8_t  s_lodgeKnocks = 0;
 static uint32_t s_lodgeKnockAt = 0;
 static bool     s_lodgePending = false;
+// The igloo that turns up in the SNOWFALL snow: three knocks and MEATY rolls
+// out of it. The lodge's box-and-freshness rule; the two eyes in its door are
+// the tell, and each knock opens them wider. Meant to be EASY (asked for
+// 2026-10-13): it comes by about every half minute, the target is generous,
+// and the knocks can be slow.
+static const uint8_t  IGLOO_KNOCKS_NEEDED = 3;
+static const uint32_t IGLOO_KNOCK_WINDOW  = 6000;
+static int      s_iglooHitX = -1, s_iglooHitY = 0;
+static uint32_t s_iglooAt = 0, s_iglooKnockAt = 0;
+static uint8_t  s_iglooKnocks = 0;
+static bool     s_iglooPending = false;
 // The FIRE owl while he asks WHAT REEKS?!: where he and his bubble were the
 // last frame he asked it, and when. backgroundTap() only believes a frame
 // from the last quarter second, the same freshness rule as the eye.
@@ -4875,6 +4886,12 @@ bool consumeOwlReek() {
 bool consumeLodgeKnock() {
     if (!s_lodgePending) return false;
     s_lodgePending = false;
+    return true;
+}
+
+bool consumeIglooKnock() {
+    if (!s_iglooPending) return false;
+    s_iglooPending = false;
     return true;
 }
 
@@ -4971,6 +4988,21 @@ bool backgroundTap(int x, int y, uint32_t now) {
             if (++s_lodgeKnocks >= LODGE_KNOCKS_NEEDED) {
                 s_lodgeKnocks = 0;
                 s_lodgePending = true;
+            }
+            return true;
+        }
+    }
+
+    // Three knocks on the igloo in the snow. A box again: it is a building
+    // too, and a small one, so a few pixels of slack round it.
+    if (s_iglooAt && (now - s_iglooAt) <= 250 && !Squachy::meatyUnlocked()) {
+        const int idx = x - s_iglooHitX, idy = y - s_iglooHitY;
+        if (idx >= -24 && idx <= 24 && idy >= -30 && idy <= 8) {
+            if ((now - s_iglooKnockAt) > IGLOO_KNOCK_WINDOW) s_iglooKnocks = 0;
+            s_iglooKnockAt = now;
+            if (++s_iglooKnocks >= IGLOO_KNOCKS_NEEDED) {
+                s_iglooKnocks = 0;
+                s_iglooPending = true;
             }
             return true;
         }
@@ -6001,6 +6033,7 @@ static SnowObj   s_prop[PROP_N];                  // kind in .b: 0 rock 1 stump 
 // where every tree whitens on the same frame reads as a palette swap.
 static float     s_lodgeX = 0.0f;                 // the lodge, on the far plane
 static float     s_nearX = 0.0f;                  // one foreground tree
+static float     s_iglooX = 0.0f;                 // the igloo, now and then on the slope
 static uint8_t   s_bankD[SNOW_COLS];
 static uint8_t   s_trackD[SNOW_COLS];             // carved tracks, fill back in
 static bool      s_snowInit = false;
@@ -6304,6 +6337,45 @@ static void snowAurora(TFT_eSPI& t, int w, int yStart, int bandH,
                                        (uint16_t)((y - yStart) * 255 / (bandH > 0 ? bandH : 1)));
             t.drawFastHLine(x0, y, x1 - x0, blend(sky, hue, (uint16_t)a));
         }
+    }
+}
+
+// The igloo on the slope, 24 wide and 13 tall, its base on the snow at
+// (x, gy). Snow blocks, a dark door, and -- until MEATY is earned -- two
+// eyes in the door that blink and open wider with each knock.
+static void snowIgloo(TFT_eSPI& t, int x, int gy, uint32_t now, uint16_t lit, uint16_t dim) {
+    const int R = 12, Hh = 13;
+    const uint16_t edge = blend(dim, (uint16_t)0x4A69, 110);
+    for (int i = 0; i < Hh; i++) {
+        const int d = Hh - i;
+        int hw = 0;
+        while ((hw + 1) * (hw + 1) * Hh * Hh <= R * R * (Hh * Hh - d * d + d)) hw++;
+        t.drawFastHLine(x - hw - 1, gy - Hh + i, 2 * hw + 2, edge);
+        if (hw > 0) t.drawFastHLine(x - hw, gy - Hh + i, 2 * hw, lit);
+    }
+    t.drawFastHLine(x - 3, gy - Hh - 1, 6, edge);
+    // block lines
+    for (int y = gy - 4, row = 0; y > gy - Hh + 2; y -= 4, row++) {
+        const int d = gy - y;
+        int hw = 0;
+        while ((hw + 1) * (hw + 1) * Hh * Hh <= R * R * (Hh * Hh - d * d)) hw++;
+        if (hw > 2) t.drawFastHLine(x - hw + 1, y, 2 * hw - 2, dim);
+        for (int bx = x - hw + 3 + (row & 1) * 3; bx < x + hw - 1; bx += 6) t.drawFastVLine(bx, y - 3, 3, dim);
+    }
+    // the door, a little left of centre
+    const int dx = x - 3;
+    t.fillRect(dx - 4, gy - 6, 9, 6, (uint16_t)0x18A2);
+    t.drawFastHLine(dx - 3, gy - 7, 7, (uint16_t)0x18A2); t.drawFastHLine(dx - 2, gy - 8, 5, (uint16_t)0x18A2);
+    if (Squachy::meatyUnlocked()) return;              // he lives with you now
+    // two eyes in the dark, blinking; wider with every knock
+    const bool blink = (now % 3700u) < 160;
+    const int open = s_iglooKnocks;                      // 0, 1 or 2
+    for (int e = 0; e < 2; e++) {
+        const int ex = dx - 3 + e * 4, ey = gy - 5 - (open ? 1 : 0);
+        if (blink && !open) { t.drawFastHLine(ex, ey + 1, 3, (uint16_t)0xFFFF); continue; }
+        // half shut until knocked; wide open, pupils up, after one
+        t.fillRect(ex, ey, 3, open ? 3 : 2, (uint16_t)0xFFFF);
+        t.drawPixel(ex + 1, ey + (open ? 0 : 1), (uint16_t)0x0000);
     }
 }
 
@@ -7011,6 +7083,7 @@ void drawSnowfall(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         s_lodgeX = (float)(w + 140);
         for (uint8_t i = 0; i < PROP_N; i++)   { s_prop[i].x = (float)(i * (w + 70) / PROP_N); s_prop[i].b = (uint8_t)(i % 3); }
         s_nearX = (float)(w + 120);
+        s_iglooX = (float)(w + 40);         // the first one soon
         s_snLastMs = now; s_dawnAt = now;
         for (uint8_t i = 0; i < RIDER_N; i++) {
             s_rid[i].x = -40.0f; s_rid[i].air = 0.0f; s_rid[i].vy = 0.0f;
@@ -7333,6 +7406,13 @@ void drawSnowfall(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         }
         s_nearX -= WORLD_SPD * PL_NEAR * ds;
         if (s_nearX < -60.0f) s_nearX = (float)(w + 60 + random(0, 700));
+        // The igloo goes by on the slope about every half minute, so nobody
+        // waits long for a knock -- and less often once he's yours.
+        s_iglooX -= WORLD_SPD * PL_ACT * ds;
+        if (s_iglooX < -40.0f) {
+            s_iglooX = Squachy::meatyUnlocked() ? (float)(w + 200 + random(0, 1400)) : (float)(w + 60 + random(0, 240));
+            s_iglooKnocks = 0;          // a fresh igloo, and a fresh count
+        }
     }
     for (uint8_t i = 0; i < PROP_N; i++) {
         const int px = (int)s_prop[i].x;
@@ -7350,6 +7430,14 @@ void drawSnowfall(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             for (int k = 0; k < 14; k++)
                 t.fillRect(px - 7 + k, gy - 1 - k, 1, k + 2, snowLit);
             t.fillRect(px + 5, gy - 15, 3, 3, snowDim);
+        }
+    }
+    {
+        const int ix = (int)s_iglooX;
+        if (ix > -30 && ix < w + 30) {
+            const int gy = groundAt(ix) + 2;
+            snowIgloo(t, ix, gy, now, snowLit, snowDim);
+            s_iglooHitX = ix; s_iglooHitY = gy; s_iglooAt = now;
         }
     }
     for (uint8_t i = 0; i < TREE_ACT; i++) {

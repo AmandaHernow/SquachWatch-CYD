@@ -224,7 +224,7 @@ namespace Squachy {
 
     // Which one. There are two now, so the Settings row cycles rather than
     // toggles: OFF, then each companion in turn.
-    enum class PetId : uint8_t { OFF = 0, SHAGGY, YETI, CLIPPY, TOASTER, BALL, COUNT };
+    enum class PetId : uint8_t { OFF = 0, SHAGGY, YETI, CLIPPY, TOASTER, BALL, MEATY, COUNT };
     PetId       petChoice();
     const char* petName();     // for the row's value column
     void        cyclePet();
@@ -248,6 +248,12 @@ namespace Squachy {
     bool toasterUnlocked();
     void unlockToaster(const char* why);
     const char* takeToasterIntro();
+    // MEATY, unlocked on his own: knock three times on the igloo that turns
+    // up in the SNOWFALL snow, and he rolls out of the door. Put on the moment
+    // he is earned, like the other two.
+    bool meatyUnlocked();
+    void unlockMeaty(const char* why);
+    const char* takeMeatyIntro();
     // The ball and chain, as a pet: earned by serving a whole sentence. Out
     // of custody he still sits chained to the ankle and still stops a throw
     // short; he just has different things to say about it.

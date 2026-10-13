@@ -306,7 +306,7 @@ static void usage() {
         "  --noseed          no detections at all -- CLEAR's idle state\n"
         "  --gps             a fresh GPS fix: CLEAR's GPS label, DIAGNOSTICS' GPS lines,\n"
         "                    the ALERT card's place\n"
-        "  --pet N           companion: 0 off, 1 VAPOR SHAGGY, 2 the yeti, 3 C1iPPY, 4 T0@$TY, 5 the ball\n"
+        "  --pet N           companion: 0 off, 1 VAPOR SHAGGY, 2 the yeti, 3 C1iPPY, 4 T0@$TY, 5 the ball, 6 MEATY\n"
         "  --peer N          draw a visiting SquachMesh peer in outfit N\n"
         "  --peername NAME   give that visitor a custom name\n"
         "  --crowd N         clear screen: N squad members in range, roaming with ours\n"
@@ -501,6 +501,7 @@ int main(int argc, char** argv) {
         if (petIdx == (int)Squachy::PetId::CLIPPY) Squachy::unlockClippy(nullptr);
         if (petIdx == (int)Squachy::PetId::TOASTER) Squachy::unlockToaster(nullptr);
         if (petIdx == (int)Squachy::PetId::BALL) Squachy::unlockBall();
+        if (petIdx == (int)Squachy::PetId::MEATY) Squachy::unlockMeaty(nullptr);
         for (int k = 0; k < 8 && (int)Squachy::petChoice() != petIdx; k++) Squachy::cyclePet();
     }
 
@@ -622,6 +623,9 @@ int main(int argc, char** argv) {
     // SQUACHSIM_YETI=0 or 1: the yeti pet (--pet 2) comes straight on and
     // dances the disco (0) or the floss (1).
     if (const char* yd = getenv("SQUACHSIM_YETI")) Pet::yetiDance((int8_t)atoi(yd));
+    // SQUACHSIM_MEATY=0..3: MEATY (--pet 6) does the igloo, the hot dog,
+    // Shake it, or splits into three.
+    if (const char* mw = getenv("SQUACHSIM_MEATY")) Pet::meatyAct((int8_t)atoi(mw));
     // SQUACHSIM_JAIL=1: arrested as the screen opens, sirens and all; =2 is
     // already serving, the ball in place.
     if (const char* jl = getenv("SQUACHSIM_JAIL")) {
@@ -1179,6 +1183,7 @@ int main(int argc, char** argv) {
             Theme::backgroundTap(x, y, when);
             if (Theme::consumeOwlReek()) Squachy::unlockShambler();
             if (Theme::consumeRedGlyph()) Squachy::unlockTh3();
+            if (Theme::consumeIglooKnock()) Squachy::unlockMeaty("Who's there? Oh. It's you. I'm comin' out.");
         }
         Theme::setOwlAsks(!Squachy::shamblerUnlocked());
         Theme::setRedGlyph(!Squachy::th3Unlocked());

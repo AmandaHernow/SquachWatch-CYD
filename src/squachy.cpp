@@ -669,6 +669,8 @@ static const char* s_clippyIntro     = nullptr;
 static bool     s_toasterUnlocked    = false;  // earned by tapping the same flying toaster three times
 static bool     s_ballUnlocked    = false;      // the ball and chain, earned by serving a sentence
 static const char* s_toasterIntro    = nullptr;
+static bool     s_meatyUnlocked    = false;  // earned by knocking three times on the SNOWFALL igloo
+static const char* s_meatyIntro    = nullptr;
 // Whether the card has been shown for him. Kept separately from the unlock
 // itself, and for the same reason the outfits keep an "announced" bitmask:
 // the pet survives a reboot, so without this the celebration would play
@@ -1384,7 +1386,7 @@ static_assert(sizeof(BG_LINES) / sizeof(BG_LINES[0]) == Settings::BACKGROUND_COU
 // brings one up it is a nudge, the second is clearer, and from then on he just
 // tells you what to do. Counted in RAM, so a reboot starts the nudges over,
 // which is right for somebody who has not been paying attention.
-enum Egg : uint8_t { EGG_WOLF, EGG_CHROME, EGG_PET, EGG_EYE, EGG_PARKA, EGG_YZZERD, EGG_O9K, EGG_REEK, EGG_GLYPH, EGG_TOASTY, EGG_N };
+enum Egg : uint8_t { EGG_WOLF, EGG_CHROME, EGG_PET, EGG_EYE, EGG_PARKA, EGG_YZZERD, EGG_O9K, EGG_REEK, EGG_GLYPH, EGG_TOASTY, EGG_IGLOO, EGG_N };
 static const char* const HINTS[EGG_N][3] = {
     /* FIRE: five taps on the moon */
     { "That moon's got a werewolf look to it.",
@@ -1426,6 +1428,10 @@ static const char* const HINTS[EGG_N][3] = {
     { "One of those toasters looks lonely.",
       "Keep tapping the same toaster. It wants down.",
       "Tap one toaster three times, quick!" },
+    /* SNOWFALL: three knocks on the igloo */
+    { "Somebody lives in that igloo.",
+      "Two eyes in that igloo door. Saw 'em.",
+      "Knock on the igloo three times!" },
 };
 static uint8_t s_hintSaid[EGG_N] = {};
 
@@ -1444,6 +1450,7 @@ static bool eggLocked(uint8_t e) {
         case EGG_REEK:   return !outfitUnlocked((uint8_t)OutfitId::SHAMBLER);
         case EGG_GLYPH:  return !outfitUnlocked((uint8_t)OutfitId::TH3_0N3);
         case EGG_TOASTY: return !s_toasterUnlocked;
+        case EGG_IGLOO:  return !s_meatyUnlocked;
         default:         return false;
     }
 }
@@ -1456,7 +1463,7 @@ static uint8_t eggsHere(uint8_t out[3]) {
         case Settings::Background::FIRE:      add(EGG_WOLF); add(EGG_REEK); break;
         case Settings::Background::TOASTERS:  add(EGG_CHROME); add(EGG_PET); add(EGG_TOASTY); break;
         case Settings::Background::STARFIELD: add(EGG_EYE); break;
-        case Settings::Background::SNOWFALL:  add(EGG_PARKA); break;
+        case Settings::Background::SNOWFALL:  add(EGG_PARKA); add(EGG_IGLOO); break;
         case Settings::Background::TERMINAL:  add(EGG_YZZERD); break;
         case Settings::Background::DIGITAL:   add(EGG_GLYPH); break;
         default: break;
@@ -1512,6 +1519,7 @@ static void ensurePrefsLoaded() {
     s_clippyUnlocked     = s_petPrefs.getBool("clippy", false);
     s_toasterUnlocked    = s_petPrefs.getBool("toaster", false);
     s_ballUnlocked       = s_petPrefs.getBool("ball", false);
+    s_meatyUnlocked    = s_petPrefs.getBool("meaty", false);
     // The master unlock means every pet too, including ones that did not
     // exist when it was entered: a board that has it catches up at boot.
     if (s_allOutfitsUnlocked) {
@@ -1519,6 +1527,7 @@ static void ensurePrefsLoaded() {
         if (!s_clippyUnlocked)  { s_clippyUnlocked = true;  s_petPrefs.putBool("clippy", true); }
         if (!s_toasterUnlocked) { s_toasterUnlocked = true; s_petPrefs.putBool("toaster", true); }
         if (!s_ballUnlocked)    { s_ballUnlocked = true;    s_petPrefs.putBool("ball", true); }
+        if (!s_meatyUnlocked) { s_meatyUnlocked = true; s_petPrefs.putBool("meaty", true); }
     }
     // Defaults ON once earned: somebody who just unlocked a pet wants to
     // see it, not to go and find a switch.
@@ -2688,7 +2697,8 @@ bool consumePetUnlockCard() {
 bool petUnlocked() { ensurePrefsLoaded(); return s_petUnlocked; }
 bool clippyUnlocked() { ensurePrefsLoaded(); return s_clippyUnlocked; }
 bool toasterUnlocked() { ensurePrefsLoaded(); return s_toasterUnlocked; }
-bool anyPetUnlocked() { ensurePrefsLoaded(); return s_petUnlocked || s_clippyUnlocked || s_toasterUnlocked || s_ballUnlocked; }
+bool anyPetUnlocked() { ensurePrefsLoaded(); return s_petUnlocked || s_clippyUnlocked || s_toasterUnlocked || s_ballUnlocked || s_meatyUnlocked; }
+bool meatyUnlocked() { ensurePrefsLoaded(); return s_meatyUnlocked; }
 bool ballUnlocked() { ensurePrefsLoaded(); return s_ballUnlocked; }
 bool ballPetOn() { ensurePrefsLoaded(); return s_ballUnlocked && (PetId)s_petSel == PetId::BALL && !s_jailLeft; }
 void unlockBall() {
@@ -2707,6 +2717,7 @@ static bool petOutNow() {
     if (p == PetId::CLIPPY)  return s_clippyUnlocked;
     if (p == PetId::TOASTER) return s_toasterUnlocked;
     if (p == PetId::BALL)    return s_ballUnlocked;
+    if (p == PetId::MEATY) return s_meatyUnlocked;
     return false;
 }
 
@@ -2746,6 +2757,23 @@ void unlockToaster(const char* why) {
 }
 
 const char* takeToasterIntro() { const char* w = s_toasterIntro; s_toasterIntro = nullptr; return w; }
+
+void unlockMeaty(const char* why) {
+    ensurePrefsLoaded();
+    if (s_meatyUnlocked) return;
+    s_meatyUnlocked = true;
+    s_petPrefs.putBool("meaty", true);
+    // The same manners as the other two: on at once when nobody else is out.
+    if (!petOutNow()) {
+        s_petSel = (uint8_t)PetId::MEATY;
+        s_petPrefs.putUChar("petSel", s_petSel);
+        s_meatyIntro = why;
+    } else {
+        Theme::showToast("MEATY", "new pet. Settings > Pet", Theme::AMBER, 3500);
+    }
+}
+
+const char* takeMeatyIntro() { const char* w = s_meatyIntro; s_meatyIntro = nullptr; return w; }
 
 bool mouthPoint(int& x, int& y) {
     if (s_lastCx <= -9999) return false;
@@ -2813,6 +2841,7 @@ const char* petName() {
         case PetId::CLIPPY: return "C1iPPY";
         case PetId::TOASTER: return "T0@$TY";
         case PetId::BALL:   return "BALL & CHAIN";
+        case PetId::MEATY: return "MEATY";
         default:            return "OFF";
     }
 }
@@ -3041,6 +3070,7 @@ void unlockAllOutfits() {
     if (!s_clippyUnlocked) { s_clippyUnlocked = true; s_petPrefs.putBool("clippy", true); }
     if (!s_toasterUnlocked) { s_toasterUnlocked = true; s_petPrefs.putBool("toaster", true); }
     if (!s_ballUnlocked) { s_ballUnlocked = true; s_petPrefs.putBool("ball", true); }
+    if (!s_meatyUnlocked) { s_meatyUnlocked = true; s_petPrefs.putBool("meaty", true); }
     // No popups for the cheat: it already has its own rainbow-and-confetti
     // tell below, and eleven modals in a row would bury it. Mark the lot as
     // seen so nothing queues now or on the next boot.

@@ -541,7 +541,7 @@ None of this finds anything. All of it is why you leave him on.
 | **THEME** | Settings → APPEARANCE | Six palettes: VAPRW4VE, CYB3RGR33N, AMB3RTERM, BUBBL3GUM, GH0ST and BL00D |
 | **BACKGROUND** | Settings → APPEARANCE | Ten animated scenes: DIGITAL RAIN, STARFIELD, FLYING TOASTERS, AQUARIUM, TERMINAL LOG, FIREFLIES, FIRE, SNOWFALL, THE GIBSON (drawn from your own log) and SYNTHWAVE. Some of them hide things |
 | **DETECTIONS** | Settings → APPEARANCE | XP puts the counters along the top as taskbar buttons, one per kind in range (tap one for the closest); CLASSIC brings back the full counter rows |
-| **PET** | Settings → APPEARANCE | Someone to keep him company, once earned: VAPOR SHAGGY, THE YETI, C1iPPY, T0@$TY or BALL & CHAIN |
+| **PET** | Settings → APPEARANCE | Someone to keep him company, once earned: VAPOR SHAGGY, THE YETI, C1iPPY, T0@$TY, BALL & CHAIN or MEATY (knock on the igloo in the snow) |
 | **SQUACHY-DEX** | Settings | A card per detection type: lore, habitat, radio, rarity, and your own record with it. Whatever you catch most, ten or more, becomes his nemesis |
 | **BINGO** | Settings | A weekly card of sixteen detection types. Four in a row is a line, and finished weeks make a streak |
 | **SQUACHY'S DIARY** | Settings | Lifetime catches, most caught, first ever catch, best streaks, times petted |

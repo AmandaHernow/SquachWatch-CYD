@@ -459,6 +459,15 @@ static void toasterPoke(uint32_t now);
 static void toasterGrab(int x, int y, uint32_t now);
 static void toasterDrag(int x, int y, uint32_t now);
 static void toasterRelease(uint32_t now);
+// MEATY, in pet_meaty.inc: the same shape of plumbing as the toaster.
+static bool meatyOn() { return Squachy::petChoice() == Squachy::PetId::MEATY && Squachy::meatyUnlocked(); }
+static void meatyNoteCatch(uint8_t type);
+static bool meatyHit(int x, int y);
+static bool meatyCenter(int& x, int& y);
+static void meatyPoke(uint32_t now);
+static void meatyGrab(int x, int y, uint32_t now);
+static void meatyDrag(int x, int y, uint32_t now);
+static void meatyRelease(uint32_t now);
 // The yeti can be picked up too (pet_yeti.inc), while he is on screen.
 static bool yetiChosen() { return Squachy::petChoice() == Squachy::PetId::YETI && Squachy::petUnlocked(); }
 static bool yetiHit(int x, int y);
@@ -480,6 +489,7 @@ extern int16_t s_jX, s_jY, s_jR;
 
 void noteCatch(uint8_t type) {
     if (toasterOn()) { toasterNoteCatch(type); return; }
+    if (meatyOn()) { if (!ballOut(millis())) meatyNoteCatch(type); return; }   // not banked through a sentence
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY) return;
     s_cPending = (uint8_t)(type + 1);
 }
@@ -504,6 +514,7 @@ bool clippyHit(int x, int y) {
     x /= s_k; y /= s_k;
     if (ballOut(millis())) return ballHit(x, y);
     if (toasterOn()) return toasterHit(x, y);
+    if (meatyOn()) return meatyHit(x, y);
     if (yetiChosen()) return yetiHit(x, y);
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return false;
     return x >= s_cX - 4 && x <= s_cX + 30 && y >= s_cY - 4 && y <= s_cY + CLIP_H;
@@ -511,6 +522,7 @@ bool clippyHit(int x, int y) {
 
 void clippyPoke(uint32_t now) {
     if (toasterOn()) { toasterPoke(now); return; }
+    if (meatyOn()) { meatyPoke(now); return; }
     if (yetiChosen()) { yetiPoke(now); return; }
     // A run of pokes walks the four lines; a pause starts it over.
     if (now - s_cPokeAt > 8000) s_cPoke = 0;
@@ -523,6 +535,7 @@ void clippyPoke(uint32_t now) {
 static bool clippyCenterZ(int& x, int& y) {
     if (ballOut(millis())) { if (s_jX < -50) return false; x = s_jX; y = s_jY - s_jR; return true; }
     if (toasterOn()) return toasterCenter(x, y);
+    if (meatyOn()) return meatyCenter(x, y);
     if (yetiChosen()) return yetiCenter(x, y);
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return false;
     x = s_cX + 11; y = s_cY + 24;
@@ -538,6 +551,7 @@ void clippyGrab(int x, int y, uint32_t now) {
     x /= s_k; y /= s_k;
     if (ballOut(now)) { s_jGrab = true; return; }
     if (toasterOn()) { toasterGrab(x, y, now); return; }
+    if (meatyOn()) { meatyGrab(x, y, now); return; }
     if (yetiChosen()) { yetiGrab(x, y, now); return; }
     if (Squachy::petChoice() != Squachy::PetId::CLIPPY || s_cX < -50) return;
     s_cTh = ClipThrow::HELD;
@@ -550,6 +564,7 @@ void clippyDrag(int x, int y, uint32_t now) {
     x /= s_k; y /= s_k;
     if (s_jGrab) return;
     if (toasterOn()) { toasterDrag(x, y, now); return; }
+    if (meatyOn()) { meatyDrag(x, y, now); return; }
     if (yetiChosen()) { yetiDrag(x, y, now); return; }
     if (s_cTh != ClipThrow::HELD) return;
     gripMove(s_cG, x, y, now);
@@ -570,6 +585,7 @@ static void clipLaunch(float vx, float vy, uint32_t now) {
 void clippyRelease(uint32_t now) {
     if (s_jGrab) { s_jGrab = false; ballPoke(now); return; }
     if (toasterOn()) { toasterRelease(now); return; }
+    if (meatyOn()) { meatyRelease(now); return; }
     if (yetiChosen()) { yetiRelease(now); return; }
     if (s_cTh != ClipThrow::HELD) return;
     float vx, vy;
@@ -957,6 +973,7 @@ static void clippyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
 
 #include "pet_toaster.inc"
 #include "pet_jail.inc"
+#include "pet_meaty.inc"
 
 static void bubble(TFT_eSPI& t, int x, int y, int screenW, const char* s);   // below
 #include "pet_yeti.inc"
@@ -981,12 +998,14 @@ void drawHeldBalloons(TFT_eSPI& t) {
 bool drawnAt(int& x, int& y) {
     if (s_cX > -100) { x = s_cX; y = s_cY; return true; }
     if (s_tX > -100) { x = s_tX; y = s_tY; return true; }
+    if (s_mX > -100) { x = s_mX - MW_SW / 2; y = s_mY - MW_SH; return true; }
     if (s_jX > -100) { x = s_jX; y = s_jY; return true; }
     return false;
 }
 
 void reset() {
     toasterReset();
+    meatyReset();
     jailReset();
     s_phase  = Phase::AWAY;
     s_x      = -100.0f;
@@ -1154,27 +1173,34 @@ static void yetiTick(TFT_eSPI& t, uint32_t now, int screenW, int cx, int halfW, 
 
 
 void tick(TFT_eSPI& t, uint32_t now, int screenW, int bandTop, int bandBottom) {
+    if (Squachy::petChoice() != Squachy::PetId::MEATY || ballOut(now)) meatyAway();
     // Serving time: the pet is in custody, and the ball is out instead. Or
     // he IS the pet, by choice, which is its own kind of sentence.
     if (ballOut(now)) {
-        s_phase = Phase::AWAY; s_yPhase = YPhase::AWAY; s_cX = -100; s_tX = -100;
+        s_phase = Phase::AWAY; s_yPhase = YPhase::AWAY; s_cX = -100; s_tX = -100; s_mX = -100;
         jailTick(t, now, screenW);
         return;
     }
     s_jX = -100;
     const Squachy::PetId which = Squachy::petChoice();
     if (which == Squachy::PetId::CLIPPY) {
-        s_phase = Phase::AWAY; s_yPhase = YPhase::AWAY; s_tX = -100;
+        s_phase = Phase::AWAY; s_yPhase = YPhase::AWAY; s_tX = -100; s_mX = -100;
         if (Squachy::clippyUnlocked()) clippyTick(t, now, screenW, bandBottom);
         return;
     }
     s_cX = -100;
     if (which == Squachy::PetId::TOASTER) {
-        s_phase = Phase::AWAY; s_yPhase = YPhase::AWAY;
+        s_phase = Phase::AWAY; s_yPhase = YPhase::AWAY; s_mX = -100;
         if (Squachy::toasterUnlocked()) toasterTick(t, now, screenW, bandBottom);
         return;
     }
     s_tX = -100;
+    if (which == Squachy::PetId::MEATY) {
+        s_phase = Phase::AWAY; s_yPhase = YPhase::AWAY;
+        if (Squachy::meatyUnlocked()) meatyTick(t, now, screenW, bandBottom);
+        return;
+    }
+    s_mX = -100;
     if (!Squachy::petUnlocked() || which == Squachy::PetId::OFF) {
         s_phase  = Phase::AWAY;
         s_yPhase = YPhase::AWAY;
@@ -1423,6 +1449,7 @@ bool anyOut(uint32_t now) {
     const Squachy::PetId which = Squachy::petChoice();
     if (which == Squachy::PetId::CLIPPY)  return Squachy::clippyUnlocked();
     if (which == Squachy::PetId::TOASTER) return Squachy::toasterUnlocked();
+    if (which == Squachy::PetId::MEATY) return Squachy::meatyUnlocked();
     return Squachy::petUnlocked() && which != Squachy::PetId::OFF;
 }
 

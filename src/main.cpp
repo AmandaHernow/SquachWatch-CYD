@@ -2368,6 +2368,7 @@ volatile bool g_consoleXyzzy = false;   // XYZZY: the TERMINAL background types 
 volatile bool g_consoleClippy = false;    // CLIPPY: unlock C1iPPY, for the bench
 volatile bool g_consoleToaster = false;   // TOASTER: unlock T0@$TY, for the bench
 volatile bool g_consoleBall    = false;   // BALL: unlock the ball and chain as a pet, for the bench
+volatile bool g_consoleMeaty = false;   // MEATY: unlock him, for the bench
 volatile bool g_consolePet     = false;   // PET: the next earned pet, as the Settings row would
 volatile bool g_consoleJail = false;      // JAIL: the arrest, for the bench
 volatile bool g_consoleFree = false;      // FREE: time served, now
@@ -6095,6 +6096,12 @@ void loop() {
     }
     if (g_consoleBall) { g_consoleBall = false; Squachy::unlockBall(); Serial.println("[pet] ball and chain unlocked"); }
     if (g_consolePet)  { g_consolePet = false; Squachy::cyclePet(); Serial.printf("[pet] now %s\n", Squachy::petName()); }
+    if (g_consoleMeaty) {
+        g_consoleMeaty = false;
+        const bool had = Squachy::meatyUnlocked();
+        Squachy::unlockMeaty("Who's there? Oh. It's you. I'm comin' out.");
+        Serial.println(had ? "[pet] MEATY was already here (PET to choose him)" : "[pet] MEATY unlocked");
+    }
     if (g_consoleToaster) {
         g_consoleToaster = false;
         Squachy::unlockToaster("Reporting for duty. I'm not scared.");
@@ -6647,6 +6654,7 @@ void loop() {
             if (Theme::consumeWerewolfSummon()) Squachy::unlockWolfPelt();
             if (Theme::consumeToasterCatch())   Squachy::unlockChromeWing();
             if (Theme::consumeToasterPetCatch()) Squachy::unlockToaster("You came for me? I knew you would. I wasn't scared.");
+            if (Theme::consumeIglooKnock())     Squachy::unlockMeaty("Who's there? Oh. It's you. I'm comin' out.");
             if (Theme::consumeEyeCatch())       Squachy::unlockVoidEye();
             if (Theme::consumeLodgeKnock())     Squachy::unlockParka();
             if (Theme::consumeOwlReek())        Squachy::unlockShambler();

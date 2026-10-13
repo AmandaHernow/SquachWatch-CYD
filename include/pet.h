@@ -43,7 +43,7 @@ namespace Pet {
     bool clippyHit(int x, int y);
     void clippyPoke(uint32_t now);
     bool clippyCenter(int& x, int& y);
-    // The pet as drawn this frame (C1iPPY, T0@$TY or the ball), top left, in
+    // The pet as drawn this frame (C1iPPY, T0@$TY, MEATY or the ball), top left, in
     // the pet's own coordinates; false when none is on screen. For the
     // emulator's motion checks.
     bool drawnAt(int& x, int& y);
@@ -67,4 +67,9 @@ namespace Pet {
     // He dances it now if he is standing there, otherwise he comes on next
     // and dances it. The console's YETI DISCO / YETI FLOSS and the emulator.
     void yetiDance(int8_t which);
+
+    // MEATY's shapes on demand (pet_meaty.inc): 0 the igloo, 1 the hot dog,
+    // 2 Shake it, 3 three of him. The console's MEATY IGLOO and the rest, and
+    // the emulator.
+    void meatyAct(int8_t which);
 }
