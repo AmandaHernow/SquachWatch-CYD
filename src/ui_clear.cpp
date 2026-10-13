@@ -2699,6 +2699,7 @@ static const SquachMesh::Peer* rawGuest(uint32_t now) {
     // lesson, and a real peer turning up must not walk onto the stage.
     if (const SquachMesh::Peer* d = MeshTutor::guest()) return d;
     if (s_guest) return s_guest;          // the emulator's --peer, when set
+    if (Settings::meshCrowd() == 0) return nullptr;   // CROWD NONE: nobody visits
     if (const SquachMesh::Peer* p = Mesh::peer()) { s_realSeenAt = now; return p; }
 #if SQUACH_MESH_DEMO
     // The synthetic visitor is a FALLBACK, not the feature: it fills an empty
@@ -2716,6 +2717,7 @@ static const SquachMesh::Peer* rawGuest(uint32_t now) {
 static uint32_t rawGuestId(uint32_t now) {
     if (MeshTutor::guest()) return 0x7070u;
     if (s_guest) return 0x5111u;
+    if (Settings::meshCrowd() == 0) return 0;
     if (Mesh::peer()) {
         const uint8_t* m = Mesh::peerMac();
         uint32_t h = 2166136261u;                  // FNV-1a, plenty for six bytes

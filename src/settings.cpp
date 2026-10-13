@@ -47,7 +47,7 @@ static bool        s_detXp = true;
 // the hardware cannot hear: the ninth board in the room evicts the first, and
 // the screen would still show eight.
 static const uint8_t CROWD_MAX = 8;
-static uint8_t     s_meshCrowd = 1;   // how many on screen at once, 1..CROWD_MAX
+static uint8_t     s_meshCrowd = 1;   // how many on screen at once, 1..CROWD_MAX; 0 = NONE
 static bool        s_deskSquad     = false;   // the squad on the desk clock as well
 static uint8_t     s_deskCrowd     = 1;       // the desk's own HOW MANY
 static bool        s_deskFullVisit = false;   // one visitor: the whole visit, not a chat
@@ -472,7 +472,7 @@ void load() {
     // Both off unless asked for. See the note in settings.h.
     s_meshDetect   = s_prefs.getBool("meshrx", false);
     s_meshCrowd    = s_prefs.getUChar("crowd", 1);
-    if (s_meshCrowd < 1 || s_meshCrowd > CROWD_MAX) s_meshCrowd = 1;
+    if (s_meshCrowd > CROWD_MAX) s_meshCrowd = 1;
     // Two draws exactly what one does -- see cycleMeshCrowd(). An older build
     // could not have stored it, but a hand-edited NVS can, and a setting that
     // does nothing is worse than one that moved.
@@ -481,7 +481,8 @@ void load() {
     // Follows the main screen's until the desk has one of its own: the two
     // were one setting, and a board upgraded mid-use should look the same.
     s_deskCrowd     = s_prefs.getUChar("dskcrwd", s_meshCrowd);
-    if (s_deskCrowd < 1 || s_deskCrowd > CROWD_MAX || s_deskCrowd == 2) s_deskCrowd = s_meshCrowd;
+    // NONE is the main screen's alone (the desk has SQUAD ON DESK for that).
+    if (s_deskCrowd < 1 || s_deskCrowd > CROWD_MAX || s_deskCrowd == 2) s_deskCrowd = s_meshCrowd ? s_meshCrowd : 1;
     s_deskFullVisit = s_prefs.getBool("dskvisit", false);
     s_meshTransmit = s_prefs.getBool("meshtx", false);
     s_meshConsent  = s_prefs.getBool("meshok", false);
@@ -973,7 +974,8 @@ uint8_t deskCrowd() { return s_deskCrowd; }
 static const char* crowdLabel(uint8_t n) {
     // ONE is a different thing, not a count of one: it is the ordinary visit,
     // with the set pieces and the emotes that a crowd stands down.
-    if (n <= 1) return "ONE";
+    if (n == 0) return "NONE";
+    if (n == 1) return "ONE";
     static char b[10];
     snprintf(b, sizeof b, "UP TO %u", (unsigned)n);
     return b;
@@ -997,8 +999,11 @@ static uint8_t nextCrowd(uint8_t c) {
     if (n == 2) n = 3;
     return n;
 }
+// The main screen's goes NONE -> ONE -> 3 .. 8 -> NONE. NONE keeps everybody
+// off the screen -- no visit, no crowd -- while the squad badge, messages and
+// heads-ups carry on: one Squachy each when a desk full of boards is under test.
 void cycleMeshCrowd() {
-    s_meshCrowd = nextCrowd(s_meshCrowd);
+    s_meshCrowd = s_meshCrowd >= CROWD_MAX ? 0 : nextCrowd(s_meshCrowd);
     s_prefs.putUChar("crowd", s_meshCrowd);
 }
 void cycleDeskCrowd() {

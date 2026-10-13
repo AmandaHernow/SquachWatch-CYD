@@ -118,7 +118,7 @@ void uiMeshMenuTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool 
     row(t, w, rowY(3), rowH, "HEADS-UP", Settings::meshHeadsUp() ? "ON" : "OFF",
         Settings::meshHeadsUp() && MeshTalk::ready() ? Theme::GREEN : Theme::W95_SHADOW);
     row(t, w, rowY(4), rowH, "CROWD", Settings::meshCrowdLabel(),
-        Settings::meshCrowd() > 1 ? Theme::GREEN : Theme::W95_SHADOW);
+        Settings::meshCrowd() > 1 ? Theme::GREEN : Settings::meshCrowd() == 0 ? Theme::AMBER : Theme::W95_SHADOW);
     // Everybody who has ever held the phrase, here or not.
     char sq[12];
     const uint8_t members = MeshTalk::rosterCount();

@@ -500,6 +500,10 @@ namespace Settings {
     // the ground. Measured on hardware: eight at the size they shrink to cost
     // LESS to draw than the two at today's size do (17.6 ms against 29).
     //
+    // NONE (0) puts nobody else on screen at all -- no visit, no crowd -- for a
+    // bench of boards that should each show just its own Squachy; the badge,
+    // messages and heads-ups still work.
+    //
     // Any number from one to eight, and EIGHT IS NOT ARBITRARY: the radio's
     // squad ring holds eight (SQUAD_N in mesh.cpp), so a ninth board in the
     // room evicts the first. Raising this without raising that would offer a
