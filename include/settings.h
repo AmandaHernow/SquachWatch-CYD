@@ -320,6 +320,11 @@ namespace Settings {
     void        setLoraListen(uint8_t v);   // 0 off, 1 Meshtastic, 2 MeshCore, 3 both
     void        cycleLoraListen();
     const char* loraListenName();
+    // LORA TX (the T-Deck): what the chats' compose line sends at. 0 = off,
+    // else dBm. Off by default: a sniffer that talks is opt-in.
+    uint8_t     loraTxDbm();
+    void        cycleLoraTx();         // OFF -> 10 dBm -> 20 dBm -> OFF
+    const char* loraTxName();
     uint8_t     loraRegion();
     void        setLoraRegion(uint8_t r);
     uint8_t     loraFocus();

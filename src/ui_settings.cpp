@@ -164,8 +164,9 @@ static const SettingsRow SYSTEM_ROWS[] = {
     SettingsRow::BOARD_BATTERY,
 #endif
 #if SQUACH_LORA && defined(TDECK_PLUS)
-    // The T-Deck's LoRa radio: the watch's two rows, on the page it has.
-    SettingsRow::WATCH_LORA_CHATS, SettingsRow::WATCH_LORA,
+    // The T-Deck's LoRa radio: the watch's two rows, on the page it has, and
+    // its own LORA TX (it has a keyboard to type with).
+    SettingsRow::WATCH_LORA_CHATS, SettingsRow::WATCH_LORA, SettingsRow::LORA_TX,
 #endif
 #if defined(ESP32) && !defined(TWATCH_S3)
     SettingsRow::LAST_RUN,
@@ -248,6 +249,7 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::WATCH_WARDRIVE:
         case SettingsRow::WATCH_LORA:
         case SettingsRow::WATCH_LORA_CHATS:
+        case SettingsRow::LORA_TX:
         case SettingsRow::WATCH_QUIET_TAGS:
             return RowGroupId::WATCH;
         // TIME ZONE sat on the SYSTEM page too, the same setting twice. Only
@@ -1045,6 +1047,10 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
         case SettingsRow::WATCH_QUIET_TAGS:
             label = "TAGS + RINGS"; value = Settings::quietTrackers() ? "LOG ONLY" : "ALERT";
             break;
+#endif
+        // The LoRa rows: the watch's and the T-Deck's (the T-Deck lists them on
+        // its SYSTEM page), so outside the watch-only block above -- inside it
+        // they fell through to "?" on the T-Deck (2026-10-13).
 #if SQUACH_LORA
         case SettingsRow::WATCH_LORA:
             label = "LORA"; value = Settings::loraListenName();
@@ -1056,7 +1062,9 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             else value = "OPEN";
             break;
         }
-#endif
+        case SettingsRow::LORA_TX:
+            label = "LORA TX"; value = Settings::loraTxName();
+            break;
 #endif
 #if defined(CYD_GPS)
         case SettingsRow::WATCH_WARDRIVE:

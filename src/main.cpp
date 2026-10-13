@@ -1603,6 +1603,9 @@ static void tdeckKeysTick(uint32_t now) {
 #if SQUACH_MESH
     else if (state == AppState::PHONE) uiPhoneKey(c);
 #endif
+#if SQUACH_LORA
+    else if (state == AppState::LORA_CHAT) uiLoraChatKey(c, now);
+#endif
 }
 #endif
 
@@ -7795,14 +7798,6 @@ void loop() {
                             Theme::showToast("TAGS + RINGS", Settings::quietTrackers() ? "Logged, no wake or buzz" : "Alert like the rest",
                                              Theme::CYAN);
                             break;
-#if SQUACH_LORA
-                        case SettingsRow::WATCH_LORA:
-                            Settings::cycleLoraListen();
-                            Lora::applyListen(Settings::loraListen());
-                            Theme::showToast("LORA", Settings::loraListenName(), Theme::CYAN);
-                            break;
-                        case SettingsRow::WATCH_LORA_CHATS: enterLoraChat(); break;
-#endif
                         case SettingsRow::WATCH_WARDRIVE:
                             // Through the console's own path, so the row and
                             // WARDRIVE ON/OFF can never disagree about what
@@ -7824,6 +7819,20 @@ void loop() {
                                 twatchBuzz(Buzz::SAMPLE);
                             }
                             Serial.printf("[buzz] %s\n", Settings::buzzModeName());
+                            break;
+#endif
+                        // The LoRa rows, the watch's and the T-Deck's: outside the
+                        // watch-only block above, where the T-Deck's taps went nowhere (2026-10-13).
+#if SQUACH_LORA
+                        case SettingsRow::WATCH_LORA:
+                            Settings::cycleLoraListen();
+                            Lora::applyListen(Settings::loraListen());
+                            Theme::showToast("LORA", Settings::loraListenName(), Theme::CYAN);
+                            break;
+                        case SettingsRow::WATCH_LORA_CHATS: enterLoraChat(); break;
+                        case SettingsRow::LORA_TX:
+                            Settings::cycleLoraTx();
+                            Theme::showToast("LORA TX", Settings::loraTxName(), Theme::CYAN);
                             break;
 #endif
 #if defined(CYD_GPS)
@@ -8765,8 +8774,9 @@ void loop() {
                 if (!gestureMoved && now - gestureDownMs <= TAP_MAX_MS) {
                     lastTouch = now;
                     if (Theme::pinnedBackHit(gestureStartX, gestureStartY, tft.width(), tft.height())) {
-                        enterSettings();
-                        uiSettingsOpenPage(SettingsPage::WATCH);
+                        // Straight home, not back to the settings page the chats
+                        // were opened from (asked for 2026-10-13, on the T-Deck).
+                        enterClear();
                         break;
                     }
                     const LoraChatHit hit = uiLoraChatHit(*canvas, gestureStartX, gestureStartY);

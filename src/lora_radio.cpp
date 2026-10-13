@@ -23,25 +23,26 @@ static SPIClass s_loraSpi(HSPI);
 #define LORA_SPI s_loraSpi
 #elif defined(TDECK_PLUS)
 // The T-Deck Plus's SX1262 sits on the DISPLAY's bus (SCK 40, MISO 38, MOSI
-// 41), beside the SD card, and the display is pushed by a DMA task of its
-// own through the IDF's SPI master driver. The radio goes through that same
-// driver, as a second device on the same host (SharedHal below): the driver
-// reprograms the host every time the two swap, so nothing the radio sets
-// leaks into a frame. Talking through the Arduino SPIClass instead left the
-// host in a state the DMA pushes completed through without a pixel landing,
-// and the screen froze with the firmware running (2026-10-12). Every
-// transaction still takes FramePush::busLock() first, which waits for a push
-// in flight and holds the next one off. Pins from LilyGo's utilities.h.
+// 41), beside the SD card. The radio shares the screen's SETUP, not just its
+// wires: its bytes go out through the same register path the screen's own
+// commands use (SharedHal and sharedXfer below), under FramePush::busLock()
+// so never while a frame is on the wire, and the only thing changed for its
+// turn is the clock (the SX126x takes 16 MHz at most; the panel runs at 40)
+// -- put back before the lock is released. Nothing is registered with the
+// IDF driver as a second device: two attempts that way (2026-10-12/13) had
+// the driver reprogram the whole host at every swap, and the screen's next
+// window command went out under the radio's settings: tearing, then a frozen
+// panel with the firmware running at 28 fps. Pins from LilyGo's utilities.h.
 #include "frame_push.h"
 #include <TFT_eSPI.h>
+#include <soc/spi_reg.h>
 #include <driver/spi_master.h>
-extern TFT_eSPI tft;                 // main.cpp's; for initDMA() (sharedDev below)
+extern spi_device_handle_t dmaHAL;   // TFT_eSPI's device for the panel's DMA pushes
 #define LORA_PIN_NSS   9
 #define LORA_PIN_DIO1  45
 #define LORA_PIN_RST   17
 #define LORA_PIN_BUSY  13
 #define LORA_SPI SPI                 // not used on this board; the device below is
-#define LORA_IDF_HOST SPI2_HOST      // TFT_eSPI's host on an S3 without USE_HSPI_PORT
 #define LORA_SHARED_BUS 1
 #else
 #error "SQUACH_LORA on a board with no LoRa pins"
@@ -69,50 +70,75 @@ public:
 };
 
 #if LORA_SHARED_BUS
-// The radio as a device of the IDF SPI master driver, on the display's host
-// (TFT_eSPI's initDMA() set the host up; the frame push task runs before the
-// radio starts). 8 MHz, mode 0, the chip select left to RadioLib, which
-// drives NSS itself around each exchange.
-static spi_device_handle_t s_dev = nullptr;
-static bool sharedDev() {
-    if (s_dev) return true;
-    spi_device_interface_config_t d = {};
-    d.mode           = 0;
-    d.clock_speed_hz = 8000000;
-    d.spics_io_num   = -1;
-    d.queue_size     = 1;
-    // The radio starts before the first frame goes out, and it is the first
-    // push that has TFT_eSPI set the host up for DMA. Set it up now instead
-    // (the push finds it done, see pushDma()) and add the device to it.
-    if (!tft.DMA_Enabled) tft.initDMA(false);
-    return spi_bus_add_device(LORA_IDF_HOST, &d, &s_dev) == ESP_OK;
+// One exchange, full duplex, through the host's own word registers: up to 64
+// bytes a go, the chip select held by the caller across the lot (an SX126x
+// command is one NSS-low frame, and the clock may pause inside it). The host
+// is idle between frames, set up for the panel by the pusher's endWrite();
+// the clock, the duplex bits and the length are the three things touched,
+// and all three go back before this returns. SPI_UPDATE commits a changed
+// setup on the S3 before SPI_USR starts a transfer (the library does the
+// same in TFT_WRITE_BITS).
+static uint32_t s_radioClk = 0;
+static inline void hostLatch() {
+    WRITE_PERI_REG(SPI_CMD_REG(SPI_PORT), SPI_UPDATE);
+    while (READ_PERI_REG(SPI_CMD_REG(SPI_PORT)) & SPI_UPDATE) {}
 }
-// One exchange, full duplex, through word-aligned internal buffers (the bus
-// is a DMA bus; the driver copies anything it cannot DMA from). The caller
-// holds the bus lock and the chip select.
 static bool sharedXfer(const uint8_t* out, uint8_t* in, size_t len) {
-    static uint8_t txb[300] __attribute__((aligned(4)));
-    static uint8_t rxb[300] __attribute__((aligned(4)));
-    if (len == 0 || len > sizeof txb || !sharedDev()) return false;
-    if (out) memcpy(txb, out, len); else memset(txb, 0, len);
-    spi_transaction_t t = {};
-    t.length    = len * 8;
-    t.tx_buffer = txb;
-    t.rx_buffer = rxb;
-    // Queued and interrupt-driven, the way the frame push's own transfers
-    // go: a polling transaction spun forever in the driver's "is it done"
-    // loop at priority 3 on core 1 and starved the loop (2026-10-12).
-    const esp_err_t e = spi_device_transmit(s_dev, &t);
-    if (e != ESP_OK) { Serial.printf("[lora] SPI exchange failed (%d)\n", (int)e); return false; }
-    if (in) memcpy(in, rxb, len);
+    if (len == 0) return false;
+    if (!s_radioClk) s_radioClk = spiFrequencyToClockDiv(8000000);
+    // The IDF driver owns this host once the panel's DMA is up, and its
+    // interrupt handler answers the host's transfer-done interrupt -- which a
+    // register-fed transfer raises too. Called with nothing of its own
+    // queued and no device holding the bus, the handler walked an empty
+    // entry: LoadProhibited in spi_bus_lock_bg_exit, every 15 s to 6 min,
+    // on whichever task was running (the black box, 2026-10-13). So the
+    // panel's device holds the bus for the radio's turn, the way it does
+    // around the library's own register-fed writes, and the interrupt is
+    // masked while the bytes go out and its flag cleared before it is
+    // unmasked. Before the DMA is up there is no handler to misfire.
+    const bool held = dmaHAL && !FramePush::pushHoldsBus() && spi_device_acquire_bus(dmaHAL, portMAX_DELAY) == ESP_OK;
+    const uint32_t ena0  = READ_PERI_REG(SPI_DMA_INT_ENA_REG(SPI_PORT));
+    WRITE_PERI_REG(SPI_DMA_INT_ENA_REG(SPI_PORT), 0);
+    const uint32_t user0 = READ_PERI_REG(SPI_USER_REG(SPI_PORT));
+    const uint32_t clk0  = READ_PERI_REG(SPI_CLOCK_REG(SPI_PORT));
+    const uint32_t dlen0 = READ_PERI_REG(SPI_MS_DLEN_REG(SPI_PORT));
+    WRITE_PERI_REG(SPI_CLOCK_REG(SPI_PORT), s_radioClk);
+    WRITE_PERI_REG(SPI_USER_REG(SPI_PORT), (user0 & SPI_CK_OUT_EDGE) | SPI_USR_MOSI | SPI_USR_MISO | SPI_DOUTDIN);
+    size_t at = 0;
+    while (at < len) {
+        const size_t n = len - at > 64 ? 64 : len - at;
+        uint32_t w[16] = { 0 };
+        if (out) memcpy(w, out + at, n);
+        const size_t words = (n + 3) / 4;
+        for (size_t i = 0; i < words; i++) WRITE_PERI_REG(SPI_W0_REG(SPI_PORT) + (i << 2), w[i]);
+        WRITE_PERI_REG(SPI_MS_DLEN_REG(SPI_PORT), (uint32_t)(n * 8 - 1));
+        hostLatch();
+        SET_PERI_REG_MASK(SPI_CMD_REG(SPI_PORT), SPI_USR);
+        while (READ_PERI_REG(SPI_CMD_REG(SPI_PORT)) & SPI_USR) {}
+        if (in) {
+            for (size_t i = 0; i < words; i++) w[i] = READ_PERI_REG(SPI_W0_REG(SPI_PORT) + (i << 2));
+            memcpy(in + at, w, n);
+        }
+        at += n;
+    }
+    WRITE_PERI_REG(SPI_MS_DLEN_REG(SPI_PORT), dlen0);
+    WRITE_PERI_REG(SPI_USER_REG(SPI_PORT), user0);
+    WRITE_PERI_REG(SPI_CLOCK_REG(SPI_PORT), clk0);
+    hostLatch();
+    WRITE_PERI_REG(SPI_DMA_INT_CLR_REG(SPI_PORT), SPI_TRANS_DONE_INT_CLR);
+    WRITE_PERI_REG(SPI_DMA_INT_ENA_REG(SPI_PORT), ena0);
+    if (held) spi_device_release_bus(dmaHAL);
     return true;
 }
 // RadioLib's Arduino HAL for the pins and timing, with the SPI side replaced:
-// the display bus's lock around each transaction, and the exchange itself
-// through the shared device above. RadioLib brackets every register
+// the display bus's lock around each exchange, asked for with busWant() so a
+// push in flight stops after its current 8-row chunk (about a millisecond)
+// rather than making the radio wait out the frame -- with the lock alone the
+// survey's hops slowed to the point of missing MeshCore's 65 ms preamble (0
+// of 4 decoded, 2026-10-13; 8 of 8 with the cut-in). The exchange itself
+// goes through sharedXfer. RadioLib brackets every register
 // exchange in spiBeginTransaction() .. spiEndTransaction(), from whichever
-// task asks (the loop's tick and the DIO1 worker both do), so this is the
-// one place the sharing has to be right.
+// task asks, so this is the one place the sharing has to be right.
 class SharedHal : public ArduinoHal {
 public:
     using ArduinoHal::ArduinoHal;
@@ -252,6 +278,14 @@ bool begin(BringUp& r) {
 }
 
 const BringUp& status() { return s_up; }
+
+#if LORA_SHARED_BUS
+void busHold()    { FramePush::busWant(); FramePush::busLock(); }
+void busRelease() { FramePush::busUnlock(); }
+#else
+void busHold()    {}
+void busRelease() {}
+#endif
 
 bool apply(const Lora::Profile& p) {
     if (!s_radio || !s_up.ok) return false;
@@ -400,14 +434,17 @@ bool readPacket(Lora::Packet& pk) {
     return true;
 }
 
-#if LORA_BENCH_TX
-bool benchTransmit(const uint8_t* d, uint8_t n, int8_t dbm) {
+bool transmit(const uint8_t* d, uint8_t n, int8_t dbm) {
     if (!s_radio || !s_up.ok) return false;
+    if (dbm > 22) dbm = 22;
+    if (dbm < -9) dbm = -9;
     s_radio->setOutputPower(dbm);
     const int16_t st = s_radio->transmit(const_cast<uint8_t*>(d), n);
-    Serial.printf("[lora] bench tx %u bytes at %d dBm: err %d\n", (unsigned)n, (int)dbm, (int)st);
+    Serial.printf("[lora] tx %u bytes at %d dBm: err %d\n", (unsigned)n, (int)dbm, (int)st);
     return st == RADIOLIB_ERR_NONE;
 }
+#if LORA_BENCH_TX
+bool benchTransmit(const uint8_t* d, uint8_t n, int8_t dbm) { return transmit(d, n, dbm); }
 #endif
 
 int16_t rssiNow() {

@@ -56,6 +56,14 @@ Mode mode();
 // preset, 2 MeshCore's, 3 both in turn. Found by network in the band plan's
 // table, so it means the same thing in EU 868 and US 915.
 void applyListen(uint8_t listen);
+// Sends one text on a network's main preset -- Meshtastic's LongFast under the
+// published default key, or MeshCore's Public group -- at `dbm` (capped to 14
+// in the EU band), and notes it in the ring as from YOU. `name` is what
+// MeshCore shows before the colon; Meshtastic shows the node number. Blocks
+// for the time on air (half a second on LongFast) with the sniffer parked.
+// False when the radio is absent, the preset is not in this band plan, the
+// text is empty, or the send failed.
+bool sendText(Proto p, const char* name, const char* text, int8_t dbm);
 void setFocus(uint8_t profileIdx);
 uint8_t focus();
 // Which profiles the survey rotates through, as a bitmask over the table
@@ -211,6 +219,7 @@ inline void statusLine(char* out, size_t cap) { if (cap) out[0] = '\0'; }
 inline void tick(uint32_t) {}
 inline void setMode(Mode) {}
 inline void applyListen(uint8_t) {}
+inline bool sendText(Proto, const char*, const char*, int8_t) { return false; }
 inline Mode mode() { return Mode::OFF; }
 inline void setFocus(uint8_t) {}
 inline uint8_t focus() { return 0; }

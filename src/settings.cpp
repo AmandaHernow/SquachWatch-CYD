@@ -180,6 +180,7 @@ static uint8_t  s_loraMode     = 2;
 static uint8_t  s_loraFocus    = 0;
 static uint8_t  s_loraRegion   = 0;   // AUTO
 static uint8_t  s_loraListen   = 3;   // BOTH
+static uint8_t  s_loraTx       = 0;   // LORA TX: 0 off, else dBm
 // The online lookups, all four OFF. See Settings::loraLookups() for why the
 // default is the opposite of the update check's.
 static bool     s_loraLookups  = false;
@@ -387,6 +388,12 @@ const char* loraListenName() {
     static const char* const N[4] = { "OFF", "MESHTASTIC", "MESHCORE", "BOTH" };
     return N[s_loraListen & 3];
 }
+uint8_t loraTxDbm() { return s_loraTx; }
+void cycleLoraTx() {
+    s_loraTx = s_loraTx == 0 ? 10 : s_loraTx == 10 ? 20 : 0;
+    s_prefs.putUChar("loraTx", s_loraTx);
+}
+const char* loraTxName() { return s_loraTx == 0 ? "OFF" : s_loraTx == 10 ? "10 dBm" : "20 dBm"; }
 uint8_t loraRegion() { return s_loraRegion; }
 void setLoraRegion(uint8_t r) { s_loraRegion = r > 2 ? 0 : r; s_prefs.putUChar("loraRgn", s_loraRegion); }
 uint8_t loraFocus() { return s_loraFocus; }
@@ -579,6 +586,8 @@ void load() {
     s_loraRegion   = s_prefs.getUChar("loraRgn", 0);
     s_loraListen   = s_prefs.getUChar("loraLstn", 3);
     if (s_loraListen > 3) s_loraListen = 3;
+    s_loraTx = s_prefs.getUChar("loraTx", 0);
+    if (s_loraTx != 10 && s_loraTx != 20) s_loraTx = 0;
     if (s_loraRegion > 2) s_loraRegion = 0;
     // False, every time, unless somebody has said otherwise on this board.
     s_loraLookups  = s_prefs.getBool("loraLkup", false);

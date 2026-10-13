@@ -269,22 +269,30 @@ void task(void*) {
         const uint8_t idx = nextSurveyProfile(onIdx == 0xFF ? profileCount() - 1 : onIdx);
         onIdx = idx; s_current = idx;
         const Profile& p = profile(idx);
-        if (!LoraRadio::apply(p)) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
-        s_stats.cadRounds++;
         const uint32_t frameMs = maxFrameMs(p);
-        if (!LoraRadio::startCad(cadSymbols(p), true, frameMs, cadPeak(p))) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+        // The hop in one turn on the bus: see LoraRadio::busHold().
+        LoraRadio::busHold();
+        const bool tuned = LoraRadio::apply(p);
+        const bool cadOn = tuned && LoraRadio::startCad(cadSymbols(p), true, frameMs, cadPeak(p));
+        LoraRadio::busRelease();
+        if (!tuned) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+        s_stats.cadRounds++;
+        if (!cadOn) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
         listening = true;
         s_listenStart = millis();
         if (!LoraRadio::waitIrq(cadMs(p) + 30)) { LoraRadio::standby(); listening = false; continue; }
+        LoraRadio::busHold();                    // the read and the clear in one turn
         uint16_t f = LoraRadio::irq();
         if (!(f & LoraRadio::IRQ_CAD_HIT)) {
             // CAD_DONE alone: nothing there. On to the next.
             LoraRadio::clearIrq(f);
+            LoraRadio::busRelease();
             if (millis() - lastNoise > 1000) { lastNoise = millis(); noiseSample(); }
             continue;
         }
         s_stats.cadHits++;
         LoraRadio::clearIrq((uint16_t)(LoraRadio::IRQ_CAD_HIT | LoraRadio::IRQ_CAD_DONE));
+        LoraRadio::busRelease();
         // The chip is in RX now, for frameMs at most.
         bool got = false, header = false, preamble = (f & LoraRadio::IRQ_PREAMBLE) != 0;
         const uint32_t t0 = millis();
@@ -558,6 +566,85 @@ static bool meshProfile(Proto want, uint8_t& idx) {
         if (p.hint == want && (p.group == PG_MESH_EU || p.group == PG_MESH_US)) { idx = i; return true; }
     }
     return false;
+}
+
+bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
+    if (!s_present || !text || !*text || !name) return false;
+    uint8_t idx = 0;
+    if (!meshProfile(p, idx)) return false;
+    const Profile& prof = profile(idx);
+    if (prof.group == PG_MESH_EU && dbm > 14) dbm = 14;      // ETSI's 25 mW
+    uint8_t f[256];
+    uint16_t n = 0;
+    if (p == Proto::MESHCORE) {
+        // A Public-channel text, sealed the way lora_meshcore_test seals one:
+        // timestamp, a flags byte, "name: text", zero-padded, AES-128-ECB, then
+        // two bytes of HMAC-SHA256 over the ciphertext.
+        const MeshCore::Channel ch = MeshCore::channel(0);
+        uint8_t plain[192] = {0};
+        LoraCrypto::wr32le(plain, Clock::trusted() ? Clock::nowEpoch() : 1790000000u);
+        plain[4] = 0x00;
+        int tl = snprintf((char*)plain + 5, sizeof plain - 5, "%s: %s", name, text);
+        if (tl < 0) return false;
+        if (tl > (int)sizeof plain - 6) tl = (int)sizeof plain - 6;
+        const uint16_t plen = (uint16_t)(5 + tl);
+        const uint16_t clen = (uint16_t)((plen + 15) & ~15);
+        f[0] = 0x15;          // flood, GRP_TXT
+        f[1] = 0x00;          // no path yet
+        f[2] = ch.hash;       // Public
+        LoraCrypto::Aes128 aes; aes.setKey(ch.key);
+        for (uint16_t off = 0; off < clen; off = (uint16_t)(off + 16)) aes.encryptBlock(plain + off, f + 5 + off);
+        uint8_t secret[32] = {0}; memcpy(secret, ch.key, 16);
+        uint8_t mac[32];
+        LoraCrypto::hmacSha256(secret, 32, f + 5, clen, mac);
+        f[3] = mac[0]; f[4] = mac[1];
+        n = (uint16_t)(5 + clen);
+    } else if (p == Proto::MESHTASTIC) {
+        // A default-channel text, built the way lora_meshtastic_test builds one:
+        // the 16-byte header in the clear, Data{portnum 1, text} under the
+        // published key. The node number is ours alone, from the MAC.
+        size_t tl = strlen(text);
+        if (tl > 200) tl = 200;
+        const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
+        const uint32_t id = esp_random();
+        LoraCrypto::wr32le(f, Meshtastic::BROADCAST);
+        LoraCrypto::wr32le(f + 4, from);
+        LoraCrypto::wr32le(f + 8, id);
+        f[12] = 3 | (3 << 5);           // hop limit 3, hop start 3
+        uint8_t key[16];
+        Meshtastic::expandPsk(1, key);
+        f[13] = Meshtastic::channelHash("LongFast", key, 16);
+        f[14] = 0; f[15] = (uint8_t)from;
+        uint8_t* q = f + 16;
+        *q++ = 0x08; *q++ = 0x01; *q++ = 0x12;
+        if (tl < 128) *q++ = (uint8_t)tl;
+        else { *q++ = (uint8_t)((tl & 0x7F) | 0x80); *q++ = (uint8_t)(tl >> 7); }
+        memcpy(q, text, tl);
+        const uint8_t dlen = (uint8_t)((q - (f + 16)) + tl);
+        Meshtastic::Header h; Meshtastic::parseHeader(f, (uint8_t)(16 + dlen), h);
+        Meshtastic::Channel c; memset(&c, 0, sizeof c); memcpy(c.key, key, 16); c.keyLen = 16;
+        Meshtastic::decrypt(h, c, f + 16, dlen);   // CTR: encrypting is the same operation
+        n = (uint16_t)(16 + dlen);
+    } else return false;
+    // The sniffer parked, the preset applied, the frame out, and back to
+    // whatever the radio was doing.
+    const Mode was = s_mode;
+    s_parked = false;
+    setMode(Mode::OFF);
+    for (int k = 0; k < 400 && !s_parked; k++) vTaskDelay(pdMS_TO_TICKS(10));
+    LoraRadio::apply(prof);
+    const bool ok = LoraRadio::transmit(f, (uint8_t)n, dbm);
+    LoraRadio::standby();
+    setMode(was);
+    Serial.printf("[lora] sent \"%s\" on %s at %d dBm: %s\n", text, prof.name, (int)dbm, ok ? "ok" : "FAILED");
+    if (ok) {
+        // Our own copy in the ring, so the chat shows what went out.
+        Packet pk; memset(&pk, 0, sizeof pk);
+        pk.proto = p; pk.profile = idx; pk.ms = millis();
+        Msgs::note(p, 0, p == Proto::MESHTASTIC ? (uint8_t)Meshtastic::PORT_TEXT : (uint8_t)MeshCore::TYPE_GRP_TXT,
+                   "YOU", 0, text, pk, millis(), true, 0);
+    }
+    return ok;
 }
 
 void applyListen(uint8_t listen) {
@@ -1559,78 +1646,19 @@ bool console(const char* line) {
     }
 #if LORA_BENCH_TX
     if (strncasecmp(a, "TX MC", 5) == 0) {
-        // A MeshCore Public-channel text, sealed the way lora_meshcore_test
-        // seals one: timestamp, a flags byte, "name: text", zero-padded,
-        // AES-128-ECB, then two bytes of HMAC-SHA256 over the ciphertext.
         static uint32_t s_mcN = 0;
-        s_mcN++;
-        uint8_t mc = 0;
-        if (!meshProfile(Proto::MESHCORE, mc)) { Serial.println("[lora] no MeshCore profile"); return true; }
-        const MeshCore::Channel ch = MeshCore::channel(0);
-        uint8_t plain[64] = {0};
-        LoraCrypto::wr32le(plain, Clock::trusted() ? Clock::nowEpoch() : 1790000000u);
-        plain[4] = 0x00;
-        const int tl = snprintf((char*)plain + 5, sizeof plain - 5, "Squachy: MC TEST %lu", (unsigned long)s_mcN);
-        const uint8_t plen = (uint8_t)(5 + tl);
-        const uint8_t clen = (uint8_t)((plen + 15) & ~15);
-        uint8_t f[96];
-        f[0] = 0x15;          // flood, GRP_TXT
-        f[1] = 0x00;          // no path yet
-        f[2] = ch.hash;       // Public
-        LoraCrypto::Aes128 aes; aes.setKey(ch.key);
-        for (uint8_t off = 0; off < clen; off = (uint8_t)(off + 16)) aes.encryptBlock(plain + off, f + 5 + off);
-        uint8_t secret[32] = {0}; memcpy(secret, ch.key, 16);
-        uint8_t mac[32];
-        LoraCrypto::hmacSha256(secret, 32, f + 5, clen, mac);
-        f[3] = mac[0]; f[4] = mac[1];
-        const Mode was = s_mode;
-        s_parked = false;
-        setMode(Mode::OFF);
-        for (int k = 0; k < 400 && !s_parked; k++) vTaskDelay(pdMS_TO_TICKS(10));
-        LoraRadio::apply(profile(mc));
-        Serial.printf("[lora] bench tx MeshCore \"%s\" on %s\n", (const char*)plain + 5, profile(mc).name);
-        LoraRadio::benchTransmit(f, (uint8_t)(5 + clen), 0);
-        LoraRadio::standby();
-        setMode(was);
+        char text[32];
+        snprintf(text, sizeof text, "MC TEST %lu", (unsigned long)++s_mcN);
+        Serial.printf("[lora] bench tx MeshCore \"Squachy: %s\"\n", text);
+        sendText(Proto::MESHCORE, "Squachy", text, 0);       // 0 dBm: a desk, not a county
         return true;
     }
     if (strncasecmp(a, "TX", 2) == 0 && (a[2] == '\0' || a[2] == ' ')) {
-        // A default-channel Meshtastic text on the table's first profile
-        // (LongFast), built the way lora_meshtastic_test builds one: the
-        // 16-byte header in the clear, Data{portnum 1, text} under the
-        // published key. 0 dBm: a desk, not a county.
         static uint32_t s_txN = 0;
-        s_txN++;
         char text[32];
-        snprintf(text, sizeof text, "SQUACHY TEST %lu", (unsigned long)s_txN);
-        const uint8_t tl = (uint8_t)strlen(text);
-        uint8_t f[64];
-        const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
-        const uint32_t id = esp_random();
-        LoraCrypto::wr32le(f, Meshtastic::BROADCAST);
-        LoraCrypto::wr32le(f + 4, from);
-        LoraCrypto::wr32le(f + 8, id);
-        f[12] = 3 | (3 << 5);           // hop limit 3, hop start 3
-        uint8_t key[16];
-        Meshtastic::expandPsk(1, key);
-        f[13] = Meshtastic::channelHash("LongFast", key, 16);
-        f[14] = 0; f[15] = (uint8_t)from;
-        uint8_t* p = f + 16;
-        p[0] = 0x08; p[1] = 0x01; p[2] = 0x12; p[3] = tl;
-        memcpy(p + 4, text, tl);
-        const uint8_t dlen = (uint8_t)(4 + tl);
-        Meshtastic::Header h; Meshtastic::parseHeader(f, (uint8_t)(16 + dlen), h);
-        Meshtastic::Channel c; memset(&c, 0, sizeof c); memcpy(c.key, key, 16); c.keyLen = 16;
-        Meshtastic::decrypt(h, c, p, dlen);   // CTR: encrypting is the same operation
-        const Mode was = s_mode;
-        s_parked = false;
-        setMode(Mode::OFF);
-        for (int k = 0; k < 400 && !s_parked; k++) vTaskDelay(pdMS_TO_TICKS(10));
-        LoraRadio::apply(profile(0));
-        Serial.printf("[lora] bench tx \"%s\" from %08lx on %s\n", text, (unsigned long)from, profile(0).name);
-        LoraRadio::benchTransmit(f, (uint8_t)(16 + dlen), 0);
-        LoraRadio::standby();
-        setMode(was);
+        snprintf(text, sizeof text, "SQUACHY TEST %lu", (unsigned long)++s_txN);
+        Serial.printf("[lora] bench tx \"%s\"\n", text);
+        sendText(Proto::MESHTASTIC, "Squachy", text, 0);
         return true;
     }
 #endif

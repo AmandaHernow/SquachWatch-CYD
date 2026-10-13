@@ -191,5 +191,9 @@ bool asyncOn();
 void busWant();
 void busLock();
 void busUnlock();
+// Whether the panel's device holds the IDF driver's bus right now (a frame in
+// flight, the radio let in between its chunks). A caller that needs that hold
+// for a register-fed transfer takes one only when this is false.
+bool pushHoldsBus();
 
 }  // namespace FramePush

@@ -1,5 +1,8 @@
 // SquachWatch-CYD — clear (idle) screen implementation
 #include "ui_clear.h"
+#if SQUACH_LORA && defined(TDECK_PLUS)
+#include "ui_lorachat.h"   // the LORA n NEW pill: the tiles drop under it while it is up
+#endif
 #include "clock.h"      // the watch's corner clock
 #include "sound.h"      // yoo-hoo, when a visitor walks in
 #include "draw_band.h"
@@ -3350,11 +3353,18 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     // WATCHING / HUNTING pill is up -- that lives in the same middle of the
     // bar, so they drop under it, and Squachy gives up those rows while it
     // is set -- and never on the T-Watch, whose clock and badges are there.
+    // The T-Deck's LORA n NEW pill lives in that middle too: while it is up
+    // (unread chats, radio on) the tiles drop under it, and come back up once
+    // the chats are read (asked for 2026-10-13).
 #if defined(TWATCH_S3)
     const bool tilesLow = true;
 #else
     const bool tilesLow = eng.watchKind() != DetectionEngine::WatchKind::NONE ||
-                          eng.huntKind()  != DetectionEngine::WatchKind::NONE;
+                          eng.huntKind()  != DetectionEngine::WatchKind::NONE
+#if SQUACH_LORA && defined(TDECK_PLUS)
+                          || (uiLoraChatUnread() != 0 && Settings::loraListen() != 0)
+#endif
+                          ;
 #endif
     const int tilesTop      = tilesLow ? titleBottom + 2 : 2;
     // The 135-pixel boards may borrow a third row on a crowded day (see the
