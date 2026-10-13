@@ -70,7 +70,7 @@ namespace Settings {
     // The desk clock. FONT: 0 the segment digits, 1 Bangers. SIZE: 0 small,
     // 1 medium (the size it has always been), 2 large. BACKDROP: what plays
     // inside its plate -- 0 plain, 1 digital rain, 2 snow, 3 flying toasters,
-    // 4 fire, 5 starfield, 6 fireflies.
+    // 4 fire, 5 starfield, 6 fireflies. The time format is 12 or 24 hour.
     uint8_t     clockFont();
     const char* clockFontName();
     void        cycleClockFont();
@@ -81,6 +81,8 @@ namespace Settings {
     const char* clockBackdropName();
     void        cycleClockBackdrop();
     void        cyclePrevClockBackdrop();
+    bool        clock24Hour();
+    void        toggleClock24Hour();
     void       cyclePrevBackground(); // same, but backward
 
     // Disables the two CLEAR-screen gestures that cycle background

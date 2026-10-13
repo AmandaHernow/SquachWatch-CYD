@@ -90,6 +90,7 @@ enum class SettingsRow : uint8_t {
     PRIVACY,         // PRIVACY MODE: addresses and names masked on screen, on the SYSTEM page
     EXT_SCREEN,      // the Cardputer ADV only: a second panel on the EXT header
     DET_STYLE,       // on the APPEARANCE page: XP or CLASSIC detection counters
+    CLOCK_FORMAT,    // on the DESK MODE page: 12-hour or 24-hour time
     BACK,
     COUNT,
     NONE = 255
