@@ -6100,7 +6100,7 @@ void loop() {
         g_consoleMeaty = false;
         const bool had = Squachy::meatyUnlocked();
         Squachy::unlockMeaty("Who's there? Oh. It's you. I'm comin' out.");
-        Serial.println(had ? "[pet] MEATY was already here (PET to choose him)" : "[pet] MEATY unlocked");
+        Serial.println(had ? "[pet] M3@ty was already here (PET to choose him)" : "[pet] M3@ty unlocked");
     }
     if (g_consoleToaster) {
         g_consoleToaster = false;

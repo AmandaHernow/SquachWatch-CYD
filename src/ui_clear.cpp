@@ -2780,6 +2780,9 @@ static bool petLayerFor(TFT_eSPI& t, int w, int h) {
 }
 
 static void drawPets(TFT_eSPI& t, uint32_t now, int w, int h, int bandTop, int petFloor) {
+#if SQUACH_MESH
+    Pet::setCrowd(s_crowdDrawn);
+#endif
     if (!Pet::anyOut(now) || !petLayerFor(t, w, h)) {
         Pet::setZoom(1);
         Pet::tick(t, now, w, bandTop, petFloor);
@@ -3933,6 +3936,7 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     }
 
     // The pet, last of the scene: over the counters, under the buttons.
+    Pet::setGround(sqFeet);
     if (!Settings::boringMode()) drawPets(t, now, w, h, bandTop, petFloor);
 
     // Soft buttons, straight over the background: it repaints the whole

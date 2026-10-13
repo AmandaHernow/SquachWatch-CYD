@@ -1,4 +1,4 @@
-// SquachWatch-CYD — MEATY. Included by pet.cpp inside namespace Pet, after
+// SquachWatch-CYD — M3@ty (MEATY in the code). Included by pet.cpp inside namespace Pet, after
 // T0@$TY, whose balloon, grip and throw he borrows.
 //
 // A flat rust-brown ball of ground meat with a lumpy edge, a black line round
@@ -17,83 +17,40 @@
 // His lines fit three balloon lines of 24 characters at most.
 #include "meaty_shape.inc"
 
-static const char* const MW_TIPS[] = {
-    "I'm a meatball. I'm doing a real good job.",
-    "What we doing? Are we still doing it?",
-    "I rolled here all by myself.",
-    "You wanna see a hot dog? I can do a hot dog.",
-    "I got a hair in me. It's mine now.",
-    "I know what that thing is. It's a thing.",
-    "Nobody tells me nothing.",
-    "I'm helping. You just can't tell yet.",
-    "I counted to three. Then I lost it.",
-    "My face don't move when I roll. Watch.",
-    "Is it lunch? It feels like lunch.",
-    "I'm keepin' a eye out. The big one.",
-};
-static const uint8_t MW_TIPS_N = sizeof(MW_TIPS) / sizeof(MW_TIPS[0]);
-static const char* const MW_NIGHT[] = {
-    "It's dark. I'm a little scared of the dark.",
-    "I'm gonna be a igloo for bed.",
-};
-static const char* const MW_SQUAD[] = {
-    "Company! You want some of my hair?",
-    "Hey new friend. I'm made of meat.",
-};
-static const char* const MW_POKE[] = {
-    "Hey! That's my face.",
-    "You poked my meat.",
-    "Ow. Do it again.",
-    "I'm ticklish in the middle.",
-};
-static const char* const MW_THROWN[] = {
-    "Can I do that again?",
-    "I'm okay! Most of me is okay!",
-    "I got grass in me again.",
-    "Whee! I'm a meteor!",
-    "My face stayed on. Good.",
-    "Throwing ain't nice. Do it again.",
-    "I bounced off my own face.",
-    "I'm flatter now. Is that bad?",
-    "That's how I go places.",
-    "I saw the top of the screen!",
-    "Somebody catch me next time.",
-    "I'm gonna need a minute. I'm meat.",
-};
-static const uint8_t MW_THROWN_N = sizeof(MW_THROWN) / sizeof(MW_THROWN[0]);
-static const char* const MW_SPLIT[] = {
-    "Whoa! There's three of me!",
-    "We're all gonna get back together.",
-    "Which one's me? Oh. All of 'em.",
-    "Hold on. Gotta find my other parts.",
-};
-static const char* const MW_STREAK[] = {
-    "That's %d. I'm countin' 'em.",
-    "%d throws! I'm a ball, I can take it.",
-    "Number %d. My hair fell out.",
-    "%d times. Am I a sport now?",
-};
-static const uint8_t MW_STREAK_N = sizeof(MW_STREAK) / sizeof(MW_STREAK[0]);
-static const char* const MW_SQTHROWN[] = {
-    "Whoa! You're flyin' like me!",
-    "Roll when you land! Roll!",
-    "Can I do that next?",
-};
-static const char* const MW_SCARED[] = {
-    "I'm a igloo now. Nobody's home.",
-    "Go away. I'm a igloo.",
-    "You can't see me. I'm ice.",
-};
-static const char* const MW_DOG[] = {
-    "Look! A hot dog!",
-    "Hot dog! Ta-da!",
-    "It's a hot dog. You can tell.",
-};
-static const char* const MW_SHAKE[] = {
-    "Shake it! Shake it!",
-    "I'm dancing! Don't look!",
-    "This is how you do it.",
-};
+// His lines, packed five bits a letter by tools/gen_meaty_lines.py (the
+// text lives there, readable): 1.2 KB smaller than plain strings, and no
+// table of pointers. A line is unpacked into one buffer when he says it --
+// he only ever has one up at a time.
+#include "meaty_lines.inc"
+static char s_mText[80];
+static const char* mwLine(int id) {
+    uint32_t p = 0;                                     // in bits
+    auto take = [&](int n) {
+        const uint32_t v = (uint32_t)(MW_TEXT[p >> 3] | MW_TEXT[(p >> 3) + 1] << 8) >> (p & 7);
+        p += (uint32_t)n;
+        return (int)(v & ((1u << n) - 1));
+    };
+    while (id > 0) { const int c = take(5); if (c == 31) p += 8; else if (c == 0) id--; }
+    int n = 0;
+    bool cap = true, up = false;                        // a capital starts a sentence; 30 asks for one
+    for (;;) {
+        const int c = take(5);
+        if (c == 0) break;
+        if (c == 30) { up = true; continue; }
+        char ch;
+        if (c == 31) ch = (char)take(8);                // anything else, as it is
+        else {
+            ch = c <= 26 ? (char)('a' + c - 1) : " .'"[c - 27];
+            if ((cap || up) && c <= 26) ch = (char)(ch - 32);
+        }
+        up = false;
+        if (ch == '.' || ch == '!' || ch == '?') cap = true;
+        else if (ch != ' ') cap = false;
+        if (n < (int)sizeof s_mText - 1) s_mText[n++] = ch;
+    }
+    s_mText[n] = 0;
+    return s_mText;
+}
 // What Squachy says back, in his own bubble: after he eats a catch, and
 // after anything else he says.
 static const char* const MW_BACK_EAT[] = {
@@ -107,23 +64,23 @@ static const char* const MW_BACK_TIP[] = {
 // He eats every catch. These are what he says with his mouth full.
 static const char* mwCatchLine(uint8_t type) {
     switch ((DetectionType)type) {
-        case DetectionType::FLOCK:       return "I ate the camera. It was lookin' at me funny.";
-        case DetectionType::AXON:        return "A body camera. Tasted official.";
-        case DetectionType::META:        return "Camera glasses. Crunchy.";
-        case DetectionType::SKIMMER:     return "It wanted my card. I ain't got a card.";
-        case DetectionType::RAVEN:       return "It listens for bangs. I'm quiet. I'm meat.";
+        case DetectionType::FLOCK:       return mwLine(MWL_CATCH + 0);
+        case DetectionType::AXON:        return mwLine(MWL_CATCH + 1);
+        case DetectionType::META:        return mwLine(MWL_CATCH + 2);
+        case DetectionType::SKIMMER:     return mwLine(MWL_CATCH + 3);
+        case DetectionType::RAVEN:       return mwLine(MWL_CATCH + 4);
         case DetectionType::AIRTAG:
         case DetectionType::SAMSUNG_TAG:
         case DetectionType::GOOGLE_TAG:
-        case DetectionType::TILE:        return "That one beeped all the way down.";
-        case DetectionType::DRONE:       return "Come down here. I just wanna talk to you.";
-        case DetectionType::ALPR:        return "It reads plates? I been on a plate.";
-        case DetectionType::CAMERA:      return "Tasted like batteries. Good batteries.";
-        case DetectionType::RING:        return "A doorbell. Ding dong. I ate it.";
-        case DetectionType::DEAUTH:      return "Somebody's kickin' the WiFi. Not me.";
-        case DetectionType::EVILTWIN:    return "A evil twin. I ain't got no twin. Wait.";
-        case DetectionType::HACKER:      return "I don't know what that was. I ate it to be safe.";
-        case DetectionType::IBEACON:     return "A shop beacon. I wanna go to the shop.";
+        case DetectionType::TILE:        return mwLine(MWL_CATCH + 5);
+        case DetectionType::DRONE:       return mwLine(MWL_CATCH + 6);
+        case DetectionType::ALPR:        return mwLine(MWL_CATCH + 7);
+        case DetectionType::CAMERA:      return mwLine(MWL_CATCH + 8);
+        case DetectionType::RING:        return mwLine(MWL_CATCH + 9);
+        case DetectionType::DEAUTH:      return mwLine(MWL_CATCH + 10);
+        case DetectionType::EVILTWIN:    return mwLine(MWL_CATCH + 11);
+        case DetectionType::HACKER:      return mwLine(MWL_CATCH + 12);
+        case DetectionType::IBEACON:     return mwLine(MWL_CATCH + 13);
         default:                         return nullptr;
     }
 }
@@ -148,6 +105,8 @@ static const uint16_t MW_DOOR  = 0x38A1;   // #3a160a
 static const uint16_t MW_GULLET = 0x58C2;  // #5a1a10, inside the mouth
 static const int MW_W = 30, MW_H = 27;     // his box, feet on its bottom line
 static const uint32_t MW_TALK_MS = 5500, MW_MOUTH_MS = 2400;   // the balloon; the moving mouth
+// He talks a lot: something every 20 to 40 seconds (asked for, 2026-10-13).
+static uint32_t mwNextTalk(uint32_t now) { return now + 20000 + (uint32_t)random(0, 20001); }
 static const uint32_t MW_ROLL_MS = 900, MW_LAND_MS = 420;
 static const uint32_t MW_FORM_MS = 3600, MW_POOF_MS = 300;
 static const uint32_t MW_SPLIT_MS = 2400;
@@ -180,9 +139,9 @@ static uint32_t    s_mFormAt = 0, s_mFormMs = 0;
 static int8_t      s_mAct = -1;             // asked for from the console or the emulator
 // Thrown.
 static MPh         s_mPh = MPh::NONE;
-static float       s_mfX = 0, s_mfY = 0, s_mvX = 0, s_mvY = 0;
+static Fling       s_mF;
 static Grip        s_mG;
-static uint32_t    s_mThLast = 0, s_mThAt = 0;
+static uint32_t    s_mThAt = 0;
 static bool        s_mFlung = false;
 static uint8_t     s_mStreak = 0;
 static uint32_t    s_mStreakAt = 0;
@@ -201,7 +160,7 @@ static const char* mwStreakLine(uint32_t now) {
     s_mStreakAt = now;
     if (s_mStreak < 255) s_mStreak++;
     if (s_mStreak < 3 || random(0, 2)) return nullptr;
-    snprintf(s_mStreakLine, sizeof(s_mStreakLine), MW_STREAK[random(0, MW_STREAK_N)], (int)s_mStreak);
+    snprintf(s_mStreakLine, sizeof(s_mStreakLine), mwLine(MWL_STREAK + random(0, MWL_STREAK_N)), (int)s_mStreak);
     return s_mStreakLine;
 }
 static void mwShape(MForm f, uint32_t now, uint32_t ms) { s_mForm = f; s_mFormAt = now ? now : 1; s_mFormMs = ms; }
@@ -214,34 +173,45 @@ static bool mwInForm(uint32_t now) { return s_mForm != MForm::BALL && now - s_mF
 // the 135-pixel boards, where double would be a third of the screen; and as
 // drawn on the 3.5in boards too, whose pet layer is already doubled (pet.cpp's
 // zoom) -- doubling again made him as wide as Squachy. Set each frame.
+// x256, so it can sit between whole sizes: double was too big on the 2.8in
+// (2026-10-13), most of all beside a squad, so 1.75 alone and 1.5 with a
+// crowd on screen.
 #if defined(SQW_SMALL)
-static const int MW_K_ROOMY = 1;
+static const int MW_K_ROOMY = 256, MW_K_CROWD = 256;
 #else
-static const int MW_K_ROOMY = 2;
+static const int MW_K_ROOMY = 448, MW_K_CROWD = 384;
 #endif
 static int MW_K = MW_K_ROOMY;
-#define MW_SW (MW_W * MW_K)      // his size on the screen (the pets' layer)
-#define MW_SH (MW_H * MW_K)
+#define MW_SW (MW_W * MW_K >> 8)      // his size on the screen (the pets' layer)
+#define MW_SH (MW_H * MW_K >> 8)
 // A roll is a roll: a small bounce, however far. petHopStart grows a hop with
 // distance (sized for C1iPPY), which had him bouncing three times, 56 pixels high.
 static void mwRollFix() {
-    if (s_mHop.height > 3.0f * MW_K) s_mHop.height = 3.0f * MW_K;
+    if (s_mHop.height > 3.0f * MW_K / 256) s_mHop.height = 3.0f * MW_K / 256;
     if (s_mHop.ms > MW_ROLL_MS + 300) s_mHop.ms = MW_ROLL_MS + 300;
 }
 static void mwRollStart(int from, int to, uint32_t now) {
-    petHopStart(s_mHop, from, 0.0f, to, now, MW_ROLL_MS, 3.0f * MW_K);
+    petHopStart(s_mHop, from, 0.0f, to, now, MW_ROLL_MS, 3.0f * MW_K / 256);
     mwRollFix();
 }
 static int s_mOx = 0, s_mOy = 0;
 static inline void mwAnchor(int x, int y) { s_mOx = x; s_mOy = y; }
-static inline int mwSx(int x) { return s_mOx + (x - s_mOx) * MW_K; }
-static inline int mwSy(int y) { return s_mOy + (y - s_mOy) * MW_K; }
-static inline void mR(TFT_eSPI& t, int x, int y, int w, int h, uint16_t c) { if (w > 0 && h > 0) t.fillRect(mwSx(x), mwSy(y), w * MW_K, h * MW_K, c); }
+// An art pixel's edges land on whole screen pixels, so a run of them tiles
+// with no gaps at a size between whole numbers (some come out a pixel wider).
+static inline int mwSx(int x) { return s_mOx + ((x - s_mOx) * MW_K >> 8); }
+static inline int mwSy(int y) { return s_mOy + ((y - s_mOy) * MW_K >> 8); }
+static inline void mR(TFT_eSPI& t, int x, int y, int w, int h, uint16_t c) {
+    if (w > 0 && h > 0) { const int X = mwSx(x), Y = mwSy(y); t.fillRect(X, Y, mwSx(x + w) - X, mwSy(y + h) - Y, c); }
+}
 static inline void mP(TFT_eSPI& t, int x, int y, uint16_t c) { mR(t, x, y, 1, 1, c); }
 static inline void mH(TFT_eSPI& t, int x, int y, int w, uint16_t c) { mR(t, x, y, w, 1, c); }
 static inline void mV(TFT_eSPI& t, int x, int y, int h, uint16_t c) { mR(t, x, y, 1, h, c); }
-static inline void mRR(TFT_eSPI& t, int x, int y, int w, int h, int r, uint16_t c) { if (w > 0 && h > 0) t.fillRoundRect(mwSx(x), mwSy(y), w * MW_K, h * MW_K, r * MW_K, c); }
-static inline void mDim(TFT_eSPI& t, int x, int y, int w, int h, uint8_t a) { Theme::dimRegion(t, mwSx(x), mwSy(y), w * MW_K, h * MW_K, a); }
+static inline void mRR(TFT_eSPI& t, int x, int y, int w, int h, int r, uint16_t c) {
+    if (w > 0 && h > 0) { const int X = mwSx(x), Y = mwSy(y); t.fillRoundRect(X, Y, mwSx(x + w) - X, mwSy(y + h) - Y, r * MW_K >> 8, c); }
+}
+static inline void mDim(TFT_eSPI& t, int x, int y, int w, int h, uint8_t a) {
+    const int X = mwSx(x), Y = mwSy(y); Theme::dimRegion(t, X, Y, mwSx(x + w) - X, mwSy(y + h) - Y, a);
+}
 
 // ---- his body ----------------------------------------------------------------
 // Rasterised into a bitmap each frame: which pixels he covers. The bitmap is
@@ -255,6 +225,18 @@ static inline bool mwIn(int x, int y) {
     if (x < 0 || y < 0 || x >= s_mwW || y >= s_mwH) return false;
     const int i = y * s_mwW + x;
     return (s_mwBits[i >> 3] >> (i & 7)) & 1;
+}
+// The angle to a point, 0..255 a whole turn, x > 0 (the right half). Within
+// an eighth of a turn it is how many MW_ATAN slopes the point is past: the
+// same answer, cell for cell, as the 1,150-byte table this replaced.
+static int mwAngle(int x, int y) {
+    const int ay = y < 0 ? -y : y;
+    const bool steep = ay > x;
+    const int32_t sm = (int32_t)(steep ? x : ay) * 65536, bg = steep ? ay : x;
+    int a = 0;
+    while (a < 32 && sm >= bg * (int32_t)MW_ATAN[a]) a++;
+    if (steep) a = 64 - a;
+    return y < 0 ? (256 - a) & 255 : a;
 }
 static inline int mwSin(int a8) { return Theme::isin256((uint16_t)((a8 & 255) << 8)); }
 static inline int mwCos(int a8) { return mwSin(a8 + 64); }
@@ -286,9 +268,19 @@ static void mwRaster(int cx, int fy, int W, int H, int sw, int sh, int rot8, int
             if (left) dx = -dx;
             const int ui = (int)((dx * kU) >> 24);
             if (ui >= MW_COLS) continue;
-            int a = MW_A[vi][ui];
-            if (left) a = (128 - a) & 255;
-            if (MW_R[vi][ui] < MW_BUMP[(a - rot8) & 255]) {
+            // Inside his smallest bump: in, whatever the angle. Outside his
+            // biggest: out. Only the band between needs the angle.
+            // How far out the cell is, as |u|^p + |v|^p (see the generator).
+            const int bt = vi >= MW_VBOT;
+            const int32_t r = (int32_t)MW_PU[bt][ui] + MW_PV[vi];
+            const uint16_t* T = MW_T[bt];
+            bool in = r < T[0];
+            if (!in && r < T[MW_BUMP_MAX - MW_BUMP_MIN]) {
+                int a = mwAngle(2 * ui + 1, 2 * (25 - vi));           // the cell's centre, in twentieths x2
+                if (left) a = (128 - a) & 255;
+                in = r < T[MW_BUMP[(a - rot8) & 255] - MW_BUMP_MIN];
+            }
+            if (in) {
                 const int i = y * s_mwW + x;
                 s_mwBits[i >> 3] |= (uint8_t)(1 << (i & 7));
             }
@@ -314,6 +306,21 @@ static void mwPaint(TFT_eSPI& t, uint16_t fill) {
 }
 
 // ---- his face ------------------------------------------------------------------
+// The eyes and mouths are little pictures in meaty_shape.inc (drawn as text in
+// tools/gen_meaty_shape.py), two bits a pixel; this draws one, a run at a time.
+static void mwBlit(TFT_eSPI& t, int x, int y, const uint32_t* rows, int h) {
+    const uint16_t C[4] = { 0, MW_LINE, Theme::WHITE, MW_GULLET };
+    for (int r = 0; r < h; r++) {
+        uint32_t row = rows[r];
+        for (int c = 0; row; ) {
+            const int k = (int)(row & 3);
+            int n = 1;
+            while (n < 15 && ((row >> (2 * n)) & 3) == (uint32_t)k) n++;
+            if (k) mH(t, x + c, y + r, n, C[k]);
+            row >>= 2 * n; c += n;
+        }
+    }
+}
 // Each eye is 6 wide by 5 tall: a ring, a lid line across the top, white below
 // it, and a 2 x 2 pupil tucked up under the lid; a lash flicks off the outer
 // corner. The two share the column between them.
@@ -322,15 +329,9 @@ static void mwLash(TFT_eSPI& t, int x, int y, bool right) {
     else       { mP(t, x, y, MW_LINE);     mP(t, x - 1, y - 1, MW_LINE); }
 }
 static void mwEye(TFT_eSPI& t, int x, int y, MFace f, bool blink, int look, uint32_t now, bool right) {
-    if (f == MFace::HAPPY) {
-        mP(t, x + 1, y + 2, MW_LINE); mH(t, x + 2, y + 1, 2, MW_LINE); mP(t, x + 4, y + 2, MW_LINE);
-        return;
-    }
-    mV(t, x, y + 1, 3, MW_LINE); mV(t, x + 5, y + 1, 3, MW_LINE);
-    mH(t, x + 1, y + 4, 4, MW_LINE);
-    if (blink) { mH(t, x + 1, y + 2, 4, MW_LINE); mwLash(t, x, y + 1, right); return; }
-    mR(t, x + 1, y + 1, 4, 3, Theme::WHITE);
-    mH(t, x + 1, y, 4, MW_LINE);
+    if (f == MFace::HAPPY) { mwBlit(t, x, y, MW_EYE_ART[2], 5); return; }
+    if (blink) { mwBlit(t, x, y, MW_EYE_ART[1], 5); mwLash(t, x, y + 1, right); return; }
+    mwBlit(t, x, y, MW_EYE_ART[0], 5);
     if (f == MFace::SCARED) { mP(t, x + 2 + (right ? 1 : 0), y + 2, MW_LINE); return; }
     if (f == MFace::DIZZY) {
         static const int8_t O[4][2] = { { 1, 1 }, { 2, 1 }, { 2, 2 }, { 1, 2 } };
@@ -348,39 +349,7 @@ static void mwEye(TFT_eSPI& t, int x, int y, MFace f, bool blink, int look, uint
 // While he talks it flips between three shapes, the way his does.
 enum : uint8_t { MW_CLOSED, MW_SMALL, MW_WIDE, MW_EAT, MW_SMILE, MW_OH };
 static void mwMouth(TFT_eSPI& t, int mx, int my, uint8_t shape) {
-    const uint16_t L = MW_LINE, T = Theme::WHITE;
-    switch (shape) {
-        case MW_SMALL:
-            mH(t, mx - 3, my - 1, 7, L); mR(t, mx - 4, my, 9, 2, L);
-            mP(t, mx - 5, my + 2, L); mH(t, mx - 4, my + 2, 2, L); mH(t, mx - 1, my + 2, 2, L);
-            mH(t, mx + 3, my + 2, 2, L); mP(t, mx + 5, my + 2, L);
-            mR(t, mx, my, 2, 2, T);
-            break;
-        case MW_WIDE:
-            mH(t, mx - 3, my - 2, 7, L); mR(t, mx - 5, my - 1, 11, 3, L); mR(t, mx - 6, my + 1, 13, 2, L);
-            mP(t, mx - 6, my + 3, L); mH(t, mx - 4, my + 3, 2, L); mH(t, mx - 1, my + 3, 3, L);
-            mH(t, mx + 3, my + 3, 2, L); mP(t, mx + 6, my + 3, L);
-            mR(t, mx, my - 1, 2, 2, T);
-            break;
-        case MW_EAT:
-            mH(t, mx - 3, my - 3, 7, L); mR(t, mx - 4, my - 2, 9, 5, L); mH(t, mx - 3, my + 3, 7, L);
-            mR(t, mx - 1, my - 2, 2, 2, T); mH(t, mx - 2, my + 1, 5, MW_GULLET);
-            break;
-        case MW_SMILE:
-            mP(t, mx - 3, my - 1, L); mP(t, mx - 2, my, L); mH(t, mx - 1, my + 1, 3, L);
-            mP(t, mx + 2, my, L); mP(t, mx + 3, my - 1, L);
-            mH(t, mx - 1, my, 2, T);
-            break;
-        case MW_OH:
-            mR(t, mx - 1, my - 1, 3, 3, L); mP(t, mx, my - 1, T);
-            break;
-        default:   // MW_CLOSED: the frown, the tooth under its top
-            mP(t, mx - 5, my + 2, L); mP(t, mx - 4, my + 1, L); mP(t, mx - 3, my, L);
-            mH(t, mx - 2, my - 1, 5, L);
-            mP(t, mx + 3, my, L); mP(t, mx + 4, my + 1, L); mP(t, mx + 5, my + 2, L);
-            mR(t, mx, my, 2, 2, T); mP(t, mx - 1, my, L); mP(t, mx + 2, my, L); mH(t, mx, my + 2, 2, L);
-            break;
-    }
+    mwBlit(t, mx - 6, my - 3, MW_MOUTH_ART[shape], 7);
 }
 static const uint8_t MW_TALK[8] = { MW_CLOSED, MW_WIDE, MW_SMALL, MW_WIDE, MW_CLOSED, MW_SMALL, MW_WIDE, MW_SMALL };
 static void mwFace(TFT_eSPI& t, int ex, int ey, int mx, int my, MFace f, uint32_t now, bool mouthMoving) {
@@ -434,9 +403,11 @@ static void mwBall(TFT_eSPI& t, int cx, int fy, int W, int H, int sw, int sh, in
             bx = cx + c * f100 * hw / 25600; by = fy - hh - s * f100 * hh / 25600;
             if (!mwIn(bx, by)) break;
         }
+        // Rounded, not cut short: cut short, a hair straight up came out with a
+        // gap in it and its tip floating over his head.
         for (int j = 1; j <= 3; j++) {
             const int curl = j == 3 ? (i ? 1 : -1) : 0;
-            mP(t, bx + (c * j - s * curl) / 256, by - (s * j + c * curl) / 256, MW_LINE);
+            mP(t, bx + ((c * j - s * curl + 128) >> 8), by - ((s * j + c * curl + 128) >> 8), MW_LINE);
         }
     }
     // The face stays put while the meat turns; it squashes with him.
@@ -489,9 +460,7 @@ static void mwDog(TFT_eSPI& t, int cx, int fy, int k, MFace f, uint32_t now, boo
 static void mwMini(TFT_eSPI& t, int cx, int fy, int rot8) {
     mwRaster(cx, fy, 12, 11, 256, 256, rot8, 0);
     mwPaint(t, MW_BODY);
-    mR(t, cx, fy - 7, 2, 2, Theme::WHITE); mR(t, cx + 3, fy - 7, 2, 2, Theme::WHITE);
-    mH(t, cx - 1, fy - 7, 7, MW_LINE); mP(t, cx + 1, fy - 6, MW_LINE); mP(t, cx + 4, fy - 6, MW_LINE);
-    mH(t, cx - 1, fy - 4, 3, MW_LINE); mP(t, cx, fy - 3, Theme::WHITE);
+    mwBlit(t, cx - 1, fy - 7, MW_MINI_ART[0], 5);
 }
 // The morsel of a catch, in its colour.
 static void mwMorsel(TFT_eSPI& t, int x, int y, uint16_t col) {
@@ -512,14 +481,14 @@ static bool meatyCenter(int& x, int& y) {
 static void meatyPoke(uint32_t now) {
     if (now - s_mPokeAt > 8000) s_mPoke = 0;
     s_mPokeAt = now;
-    mwSay(MW_POKE[s_mPoke % 4], now, false);
+    mwSay(mwLine(MWL_POKE + s_mPoke % MWL_POKE_N), now, false);
     s_mAnswered = true;
     s_mPoke++;
 }
 static void meatyGrab(int x, int y, uint32_t now) {
     if (s_mX < -50) return;
     s_mPh = MPh::HELD;
-    s_mfX = (float)s_mX; s_mfY = (float)s_mY;
+    s_mF.x = (float)s_mX; s_mF.y = (float)s_mY;
     gripStart(s_mG, x, y, s_mX, s_mY, now);
     s_mHop.at = 0;
     s_mForm = MForm::BALL;
@@ -531,13 +500,9 @@ static void meatyDrag(int x, int y, uint32_t now) {
     gripMove(s_mG, x, y, now);
 }
 static void mwLaunch(float vx, float vy, uint32_t now) {
-    if (vx > CLIP_MAX_V) vx = CLIP_MAX_V;
-    if (vx < -CLIP_MAX_V) vx = -CLIP_MAX_V;
-    if (vy > CLIP_MAX_V) vy = CLIP_MAX_V;
-    if (vy < -CLIP_MAX_V) vy = -CLIP_MAX_V;
-    s_mvX = vx; s_mvY = vy;
+    flingLaunch(s_mF, vx, vy, now);
     s_mPh = MPh::AIR;
-    s_mThAt = s_mThLast = now;
+    s_mThAt = now;
 }
 static void meatyRelease(uint32_t now) {
     if (s_mPh != MPh::HELD) return;
@@ -554,11 +519,13 @@ void meatyAct(int8_t which) { if (meatyOn()) s_mAct = which; }   // only when he
 
 static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     s_mOut = true;
-    MW_K = s_k > 1 ? 1 : MW_K_ROOMY;
+    MW_K = s_k > 1 ? 256 : s_crowdUp ? MW_K_CROWD : MW_K_ROOMY;
     int cx, halfW, top, bot;
     if (!zFootprint(cx, halfW, top, bot)) { s_mX = -100; return; }
     (void)top;
-    bot = floorY;
+    // On the ground with Squachy, not on the pets' line above it: a ball of
+    // meat a row of pixels off the floor looks like it is floating.
+    bot = s_sqGround >= 0 ? s_sqGround / s_k : floorY;
     const bool sqAway = Squachy::isHeld() || Squachy::thrown();
     if (sqAway) {
         if (!s_maValid) { s_mX = -100; return; }
@@ -569,7 +536,7 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     const bool sqThrown = Squachy::thrown();
     if (sqThrown && !s_mSqWasThrown && s_mPh == MPh::NONE) {
         s_mScaredAt = now ? now : 1;
-        if (!mwTalking()) { mwSay(MW_SQTHROWN[random(0, 3)], now, false); s_mAnswered = true; }
+        if (!mwTalking()) { mwSay(mwLine(MWL_SQTHROWN + random(0, MWL_SQTHROWN_N)), now, false); s_mAnswered = true; }
     }
     s_mSqWasThrown = sqThrown;
     uint32_t seenMs = (s_mLastNow && now - s_mLastNow < 100000u) ? now - s_mLastNow : 0;
@@ -578,15 +545,29 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     const int screenH = t.height();
     // Two spots beside Squachy, the right-hand side when it has room. The
     // spot is his CENTRE: he is drawn from the middle out.
-    int a = cx + halfW + 4 + MW_SW / 2, b = a + MW_SW + 4;
-    if (b + MW_SW / 2 + 4 > screenW - 2) b = a;
-    if (a + MW_SW / 2 + 4 > screenW - 2) { a = cx - halfW - 4 - MW_SW / 2; b = a - MW_SW - 4; if (b - MW_SW / 2 < 4) b = a; }
+    // He keeps to his side and squeezes up against the screen's edge rather
+    // than cross over. Taking whichever side had room every frame had him
+    // rolling across Squachy every three seconds while Squachy paced (the
+    // V8's log, 2026-10-13: 63 crossings in 15 minutes). He changes sides
+    // only when the squeeze would put him half over Squachy.
+    static bool s_mLeft = false;
+    const int minC = 4 + MW_SW / 2, maxC = screenW - 6 - MW_SW / 2;
+    int rA = cx + halfW + 4 + MW_SW / 2, lA = cx - halfW - 4 - MW_SW / 2;
+    if (rA > maxC) rA = maxC;
+    if (lA < minC) lA = minC;
+    const bool rFits = rA >= cx + halfW, lFits = lA <= cx - halfW;
+    if (s_mLeft ? (!lFits && rFits) : (!rFits && lFits)) s_mLeft = !s_mLeft;
+    int a, b;
+    // The second spot squeezes against the edge too: dropping it whenever it ran
+    // out of room hopped him 56 pixels back and forth as Squachy paced.
+    if (!s_mLeft) { a = rA; b = a + MW_SW + 4; if (b > maxC) b = maxC; }
+    else          { a = lA; b = a - MW_SW - 4; if (b < minC) b = minC; }
 
     if (const char* intro = Squachy::takeMeatyIntro()) {
         mwSay(intro, now, false);
         s_mAnswered = true;
-        Theme::showToast("MEATY", "your new pet. Settings > Pet", Theme::AMBER, 3500);
-        s_mNextTip = now + 60000;
+        Theme::showToast("M3@ty", "your new pet. Settings > Pet", Theme::AMBER, 3500);
+        s_mNextTip = mwNextTalk(now);
     }
     if (!s_mNextTip) s_mNextTip = now + 8000;
     if (!s_mNextRoll) s_mNextRoll = now + 30000 + (uint32_t)random(0, 20000);
@@ -599,17 +580,17 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     if (s_mAct >= 0 && s_mPh == MPh::NONE) {
         const int8_t act = s_mAct;
         s_mAct = -1;
-        if (act == 0) { mwShape(MForm::IGLOO, now, MW_FORM_MS); mwSay(MW_SCARED[random(0, 3)], now, false); }
-        else if (act == 1) { mwShape(MForm::DOG, now, MW_FORM_MS); mwSay(MW_DOG[random(0, 3)], now, false); }
-        else if (act == 2) { mwShape(MForm::SHAKE, now, 4000); mwSay(MW_SHAKE[random(0, 3)], now, false); }
-        else if (act == 3) { s_mPh = MPh::SPLIT; s_mThAt = now; s_mfX = (float)(s_mX > -50 ? s_mX : (s_mSpotB ? b : a)); s_mfY = (float)bot; mwSay(MW_SPLIT[random(0, 4)], now, false); }
+        if (act == 0) { mwShape(MForm::IGLOO, now, MW_FORM_MS); mwSay(mwLine(MWL_SCARED + random(0, MWL_SCARED_N)), now, false); }
+        else if (act == 1) { mwShape(MForm::DOG, now, MW_FORM_MS); mwSay(mwLine(MWL_DOG + random(0, MWL_DOG_N)), now, false); }
+        else if (act == 2) { mwShape(MForm::SHAKE, now, 4000); mwSay(mwLine(MWL_SHAKE + random(0, MWL_SHAKE_N)), now, false); }
+        else if (act == 3) { s_mPh = MPh::SPLIT; s_mThAt = now; s_mF.x = (float)(s_mX > -50 ? s_mX : (s_mSpotB ? b : a)); s_mF.y = (float)bot; mwSay(mwLine(MWL_SPLIT + random(0, MWL_SPLIT_N)), now, false); }
         s_mAnswered = true;
     }
     // Squachy dancing: so is he.
     const bool dancing = Squachy::dancing();
     if (dancing && !s_mWasDancing && s_mPh == MPh::NONE && !eating) {
         mwShape(MForm::SHAKE, now, 4000);
-        if (!mwTalking()) mwSay(MW_SHAKE[random(0, 3)], now, false);
+        if (!mwTalking()) mwSay(mwLine(MWL_SHAKE + random(0, MWL_SHAKE_N)), now, false);
     }
     s_mWasDancing = dancing;
     // A catch: a morsel in that device's colour drops into him.
@@ -625,16 +606,16 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
         // One tip in three he shows you a hot dog instead.
         if (random(0, 3) == 0) {
             mwShape(MForm::DOG, now, MW_FORM_MS);
-            mwSay(MW_DOG[random(0, 3)], now, false);
+            mwSay(mwLine(MWL_DOG + random(0, MWL_DOG_N)), now, false);
             s_mBackEat = false;
         } else {
-            const char* l = MW_TIPS[s_mTip++ % MW_TIPS_N];
-            if (Squachy::visiting() && random(0, 2) == 0) l = MW_SQUAD[random(0, 2)];
-            else if (Clock::night() && random(0, 3) == 0) l = MW_NIGHT[random(0, 2)];
+            const char* l = mwLine(MWL_TIPS + s_mTip++ % MWL_TIPS_N);
+            if (Squachy::visiting() && random(0, 2) == 0) l = mwLine(MWL_SQUAD + random(0, MWL_SQUAD_N));
+            else if (Clock::night() && random(0, 3) == 0) l = mwLine(MWL_NIGHT + random(0, MWL_NIGHT_N));
             mwSay(l, now, false);
             s_mBackEat = false;
         }
-        s_mNextTip = now + 60000 + (uint32_t)random(0, 30000);
+        s_mNextTip = mwNextTalk(now);
     }
     const bool talking = mwTalking();
     const bool mouthMoving = talking && now - s_mSaidAt < MW_MOUTH_MS;
@@ -664,68 +645,53 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
         int sw = 256, sh = 256;
         bool air = false;
         if (s_mPh == MPh::HELD) {
-            s_mfX = (float)(s_mG.fingerX - s_mG.offX);
-            s_mfY = (float)(s_mG.fingerY - s_mG.offY);
-            if (s_mfX < leftX) s_mfX = leftX;
-            if (s_mfX > rightX) s_mfX = rightX;
-            if (s_mfY < ceilY) s_mfY = ceilY;
-            if (s_mfY > floorAt) s_mfY = floorAt;
+            flingHold(s_mF, s_mG, leftX, rightX, ceilY, floorAt);
             if (!s_mG.moved) f = MFace::IDLE;
             else { sw = 236; sh = 280; }                 // dangling: meat stretches
             air = true;
             if (now - s_mG.gT > 600 && s_mG.moved) { mwLaunch(0, 0, now); s_mFlung = false; }
         } else if (s_mPh == MPh::AIR) {
             air = true;
-            uint32_t dt = now - s_mThLast;
-            if (dt > 60) dt = 60;
-            s_mThLast = now;
+            uint32_t dt = flingDt(s_mF, now);
             while (dt && s_mPh == MPh::AIR) {
-                const float st = (float)(dt > 8 ? 8 : dt);
-                dt -= (dt > 8 ? 8 : dt);
-                s_mvY += MW_G * st;
-                s_mfX += s_mvX * st;
-                s_mfY += s_mvY * st;
-                s_mRot = (int16_t)(s_mRot - (int)(s_mvX * st * 16.0f * 256.0f / (3.14159f * MW_SW)) - (s_mvX >= 0 ? 8 : -8) * (int)st);
-                if (s_mfX < leftX && s_mvX < 0)  { s_mfX = leftX;  s_mvX = -s_mvX * 0.5f; }
-                if (s_mfX > rightX && s_mvX > 0) { s_mfX = rightX; s_mvX = -s_mvX * 0.5f; }
-                if (s_mfY < ceilY && s_mvY < 0)  { s_mfY = ceilY;  s_mvY = -s_mvY * 0.3f; }
-                if (s_mfY >= floorAt && s_mvY > 0) {
+                const float st = flingTake(dt);
+                s_mRot = (int16_t)(s_mRot - (int)(s_mF.vx * st * 16.0f * 256.0f / (3.14159f * MW_SW)) - (s_mF.vx >= 0 ? 8 : -8) * (int)st);
+                if (flingStep(s_mF, st, MW_G, leftX, rightX, ceilY, floorAt, 0.5f, 0.3f)) {
                     // Meat does not bounce. It splats, or it comes apart.
-                    s_mfY = floorAt;
                     s_mThAt = now;
-                    const bool hard = s_mvY > 0.75f;
-                    if (s_mFlung) { zLandedAt((int)s_mfX); Sound::play(Sound::Id::LAND); }
+                    const bool hard = s_mF.vy > 0.75f;
+                    if (s_mFlung) { zLandedAt((int)s_mF.x); Sound::play(Sound::Id::LAND); }
                     const char* streak = s_mFlung ? mwStreakLine(now) : nullptr;
                     if (hard && s_mFlung) {
                         s_mPh = MPh::SPLIT;
-                        s_mvX = 0;
-                        mwSay(streak ? streak : MW_SPLIT[random(0, 4)], now, false);
+                        s_mF.vx = 0;
+                        mwSay(streak ? streak : mwLine(MWL_SPLIT + random(0, MWL_SPLIT_N)), now, false);
                     } else {
                         s_mPh = MPh::SPLAT;
-                        if (s_mFlung) mwSay(streak ? streak : MW_THROWN[random(0, MW_THROWN_N)], now, false);
+                        if (s_mFlung) mwSay(streak ? streak : mwLine(MWL_THROWN + random(0, MWL_THROWN_N)), now, false);
                     }
-                    s_mvY = 0;
+                    s_mF.vy = 0;
                     s_mAnswered = true;
                     s_mFlung = false;
                 }
             }
-            if (s_mPh == MPh::AIR && now - s_mThAt > 5000) { s_mfY = floorAt; s_mPh = MPh::SPLAT; s_mThAt = now; s_mFlung = false; }
+            if (s_mPh == MPh::AIR && now - s_mThAt > 5000) { s_mF.y = floorAt; s_mPh = MPh::SPLAT; s_mThAt = now; s_mFlung = false; }
         } else if (s_mPh == MPh::SPLAT) {
             f = MFace::DIZZY;
             const uint32_t e = now - s_mThAt;
             // flat on landing, rounding back out, rolling to a stop
             if (e < MW_LAND_MS) { sw = 256 + 115 * (int)(MW_LAND_MS - e) / (int)MW_LAND_MS; sh = 256 - 141 * (int)(MW_LAND_MS - e) / (int)MW_LAND_MS; }
-            s_mfX += s_mvX * (float)seenMs; s_mvX *= 0.97f;
-            if (s_mfX < leftX) s_mfX = leftX;
-            if (s_mfX > rightX) s_mfX = rightX;
-            if (e > 2200) { s_mPh = MPh::NONE; mwRollStart((int)lroundf(s_mfX), to, now); }
+            s_mF.x += s_mF.vx * (float)seenMs; s_mF.vx *= 0.97f;
+            if (s_mF.x < leftX) s_mF.x = leftX;
+            if (s_mF.x > rightX) s_mF.x = rightX;
+            if (e > 2200) { s_mPh = MPh::NONE; mwRollStart((int)lroundf(s_mF.x), to, now); }
         } else if (s_mPh == MPh::SPLIT) {
             const uint32_t e = now - s_mThAt;
-            if (e > MW_SPLIT_MS) { s_mPh = MPh::NONE; s_mLastX = (int16_t)lroundf(s_mfX); mwRollStart((int)lroundf(s_mfX), to, now); }
+            if (e > MW_SPLIT_MS) { s_mPh = MPh::NONE; s_mLastX = (int16_t)lroundf(s_mF.x); mwRollStart((int)lroundf(s_mF.x), to, now); }
         }
         if (s_mPh != MPh::NONE) {
-            s_mX = (int16_t)lroundf(s_mfX);
-            s_mY = (int16_t)lroundf(s_mfY);
+            s_mX = (int16_t)lroundf(s_mF.x);
+            s_mY = (int16_t)lroundf(s_mF.y);
             mwAnchor(s_mX, s_mY);
             if (s_mPh == MPh::SPLIT) {
                 // Three of him: apart, a moment, and rolling back together.
@@ -751,12 +717,14 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     }
 
     // ---- on his spot ----
-    petHopGuard(s_mHop, to, cx, halfW, s_mX, now, MW_ROLL_MS, 3.0f * MW_K);
+    petHopGuard(s_mHop, to, cx, halfW, s_mX, now, MW_ROLL_MS, 3.0f * MW_K / 256);
     mwRollFix();                            // a restart from the guard grows with distance too
     float x = (float)to, hop = 0.0f;
     MFace face = talking ? MFace::TALK : MFace::IDLE;
     const uint32_t since = now - s_mHop.at;
-    if (rolling) {
+    // Asked again AFTER the guard: a roll it started this frame has to be drawn
+    // from where he was, or he flashes at the far end for a frame first.
+    if (petHopping(s_mHop, now)) {
         // A roll, not a hop: eased along the ground with a little bounce.
         const float k = (float)since / (float)s_mHop.ms;
         const float e = 0.5f - 0.5f * cosf(k * 3.14159265f);
@@ -779,7 +747,7 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
         } else {
             if (!s_mEatSaid) {
                 s_mEatSaid = true;
-                if (const char* l = mwCatchLine(s_mEatType)) { mwSay(l, now, false); s_mBackEat = true; s_mNextTip = now + 60000; }
+                if (const char* l = mwCatchLine(s_mEatType)) { mwSay(l, now, false); s_mBackEat = true; s_mNextTip = mwNextTalk(now); }
                 if (mwSerious(s_mEatType)) s_mHideAt = now + 1600;
             }
             const uint32_t e = age - 700;
@@ -791,7 +759,7 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     if (s_mHideAt && (int32_t)(now - s_mHideAt) >= 0) {
         s_mHideAt = 0;
         mwShape(MForm::IGLOO, now, MW_FORM_MS);
-        mwSay(MW_SCARED[random(0, 3)], now, false);
+        mwSay(mwLine(MWL_SCARED + random(0, MWL_SCARED_N)), now, false);
         s_mAnswered = true;
     }
     if (s_mScaredAt && now - s_mScaredAt < 2500) face = MFace::SCARED;

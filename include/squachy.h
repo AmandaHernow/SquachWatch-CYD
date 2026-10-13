@@ -253,6 +253,7 @@ namespace Squachy {
     // he is earned, like the other two.
     bool meatyUnlocked();
     void unlockMeaty(const char* why);
+    void relockMeaty();      // the bench's MEATY LOCK: earn him again
     const char* takeMeatyIntro();
     // The ball and chain, as a pet: earned by serving a whole sentence. Out
     // of custody he still sits chained to the ankle and still stops a throw

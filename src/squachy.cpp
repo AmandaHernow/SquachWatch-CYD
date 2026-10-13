@@ -2769,11 +2769,19 @@ void unlockMeaty(const char* why) {
         s_petPrefs.putUChar("petSel", s_petSel);
         s_meatyIntro = why;
     } else {
-        Theme::showToast("MEATY", "new pet. Settings > Pet", Theme::AMBER, 3500);
+        Theme::showToast("M3@ty", "new pet. Settings > Pet", Theme::AMBER, 3500);
     }
 }
 
 const char* takeMeatyIntro() { const char* w = s_meatyIntro; s_meatyIntro = nullptr; return w; }
+
+void relockMeaty() {
+    ensurePrefsLoaded();
+    s_meatyUnlocked = false;
+    s_meatyIntro = nullptr;
+    s_petPrefs.putBool("meaty", false);
+    if ((PetId)s_petSel == PetId::MEATY) { s_petSel = (uint8_t)PetId::OFF; s_petPrefs.putUChar("petSel", s_petSel); }
+}
 
 bool mouthPoint(int& x, int& y) {
     if (s_lastCx <= -9999) return false;
@@ -2841,7 +2849,7 @@ const char* petName() {
         case PetId::CLIPPY: return "C1iPPY";
         case PetId::TOASTER: return "T0@$TY";
         case PetId::BALL:   return "BALL & CHAIN";
-        case PetId::MEATY: return "MEATY";
+        case PetId::MEATY: return "M3@ty";
         default:            return "OFF";
     }
 }

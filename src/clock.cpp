@@ -612,6 +612,9 @@ void pollSerial() {
         if (strcasecmp(line, "MEATY") == 0) { g_consoleMeaty = true; continue; }
         if (strncasecmp(line, "MEATY ", 8) == 0) {
             const char* w = line + 8;
+            // MEATY LOCK: take him back, so the igloo can be knocked on again.
+            // A board with the master unlock gets him back at the next boot.
+            if (strcasecmp(w, "LOCK") == 0) { Squachy::relockMeaty(); Serial.println("[meaty] locked: knock on the SNOWFALL igloo"); continue; }
             const int8_t k = strcasecmp(w, "IGLOO") == 0 ? 0 : strcasecmp(w, "DOG") == 0 ? 1 : strcasecmp(w, "SHAKE") == 0 ? 2 : strcasecmp(w, "SPLIT") == 0 ? 3 : -1;
             if (k >= 0) { Pet::meatyAct(k); Serial.printf("[meaty] %s (if he is the pet on screen)\n", w); }
             else Serial.println("[meaty] MEATY IGLOO | DOG | SHAKE | SPLIT");
