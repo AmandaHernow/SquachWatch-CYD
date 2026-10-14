@@ -60,6 +60,9 @@ static const char* const MW_BACK_EAT[] = {
 static const char* const MW_BACK_TIP[] = {
     "good meatball", "he means well", "you're doing great, buddy", "sure you did",
 };
+static const char* const MW_BACK_DANCE[] = {
+    "never do that again", "that was... something", "nailed it, buddy", "my eyes",
+};
 
 // He eats every catch. These are what he says with his mouth full.
 static const char* mwCatchLine(uint8_t type) {
@@ -114,7 +117,7 @@ static const float    MW_G = 0.0028f;
 
 enum class MFace : uint8_t { IDLE, TALK, EAT, HAPPY, SCARED, DIZZY };
 enum class MPh   : uint8_t { NONE, HELD, AIR, SPLAT, SPLIT };
-enum class MForm : uint8_t { BALL, IGLOO, DOG, SHAKE };
+enum class MForm : uint8_t { BALL, IGLOO, DOG, SHAKE, DANCE };
 
 static const char* s_mLine    = nullptr;
 static uint32_t    s_mSaidAt  = 0, s_mShownMs = 0, s_mLastNow = 0;
@@ -122,6 +125,7 @@ static uint32_t    s_mNextTip = 0, s_mNextRoll = 0, s_mPokeAt = 0, s_mScaredAt =
 static PetHop      s_mHop;
 static bool        s_mCaught = false, s_mAnswered = true, s_mSpotB = false;
 static bool        s_mBackEat = false;      // the line waiting for Squachy's reply was a catch
+static bool        s_mBackDance = false;    // ...or the dance
 static uint8_t     s_mTip = 0, s_mPoke = 0, s_mPending = 0;
 static int16_t     s_mX = -100, s_mY = 0;
 static int16_t     s_mLastX = -100;
@@ -149,6 +153,38 @@ static char        s_mStreakLine[40];
 static bool        s_maValid = false, s_mSqWasThrown = false, s_mWasDancing = false;
 static int         s_maCx = 0, s_maHalfW = 0, s_maBot = 0;
 static bool        s_mOut = false;           // drawn as the pet last frame (see meatyAway)
+// Arms. He has none -- until he needs a pair: they grow out of his sides for
+// a gesture, the dance, "Shake it" or a throw, and sink back in after. Never
+// while he rolls, eats, splits, or is an igloo or a hot dog. Angles in
+// degrees from straight down, swinging outward and up; the elbow adds to the
+// shoulder's.
+static int16_t     s_mArm[4] = { 0, 0, 0, 0 };   // left shoulder, left elbow, right shoulder, right elbow
+static int         s_mArmK = 0;              // 0 tucked in .. 256 all the way out
+static bool        s_mArmsDraw = false;      // set around the one mwBall() call that carries them
+static int8_t      s_mGest = -1;             // the gesture with the line he is saying, or none
+static uint32_t    s_mGestAt = 0;
+static uint32_t    s_mNextDance = 0;
+static const uint32_t MW_GEST_MS = 2600, MW_ARM_GROW_MS = 220;
+// His bad dance, about once a minute: steps of uneven length, arms out of
+// time with each other and with the hops. Angles in 2-degree units.
+struct MwStep { int8_t l1, l2, r1, r2, lean, lift; uint16_t ms; };
+static const MwStep MW_DANCE[] = {
+    {  75,  15,  10,   5, -6, 0, 520 },   // one arm up: woo
+    {  10,   5,  75,  15,  6, 3, 520 },   // the other: woo
+    {  48,   0,  48,   0,  0, 0, 380 },   // T
+    {  48,  30,  48, -30, -4, 2, 640 },   // the robot, wrong
+    {  85, -10,  85, -10,  0, 5, 300 },   // raise the roof
+    {  60,  20,  60,  20,  0, 0, 300 },
+    {  85, -10,  85, -10,  0, 5, 300 },
+    {  31, -75,  80, -59,  8, 0, 700 },   // hand on hip, hand on head: thinking about it
+    {  55,  45,  15,   0, -9, 1, 260 },   // the sprinkler
+    {  55,  30,  15,   0, -9, 1, 260 },
+    {  55,  15,  15,   0, -9, 1, 260 },
+    {  70,   0,  70,   0,  0, 6, 900 },   // the big finish
+};
+static const uint8_t MW_DANCE_N = sizeof(MW_DANCE) / sizeof(MW_DANCE[0]);
+static uint32_t mwDanceMs() { uint32_t s = 0; for (uint8_t i = 0; i < MW_DANCE_N; i++) s += MW_DANCE[i].ms; return s; }
+static uint32_t mwNextDance(uint32_t now) { return now + 50000 + (uint32_t)random(0, 25001); }
 
 static bool mwTalking() { return s_mLine && s_mShownMs < MW_TALK_MS; }
 static void mwSay(const char* line, uint32_t now, bool caught) {
@@ -370,6 +406,58 @@ static void mwFace(TFT_eSPI& t, int ex, int ey, int mx, int my, MFace f, uint32_
     mwMouth(t, mx + dx, my + dy, m);
 }
 
+// ---- his arms -------------------------------------------------------------------
+// A limb is a run of discs from one end to the other, their radius going from
+// r0 to r1 (art pixels x16; positions x16 too). Drawn twice: a pixel larger in
+// his line colour, then the meat.
+static void mwLimb(TFT_eSPI& t, int x0, int y0, int x1, int y1, int r0, int r1, int pad, uint16_t c) {
+    const int dx = x1 - x0, dy = y1 - y0;
+    const int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    const int n = (ax > ay ? ax : ay) / 16 + 1;
+    for (int i = 0; i <= n; i++) {
+        const int x = x0 + dx * i / n, y = y0 + dy * i / n, r = r0 + (r1 - r0) * i / n + pad * 16;
+        t.fillCircle(mwSx((x + 8) >> 4), mwSy((y + 8) >> 4), (r * MW_K + 2048) >> 12, c);
+    }
+}
+// Both arms, at s_mArm's angles, grown s_mArmK of the way out: out of his
+// sides a little below the middle. Drawn before his body, which covers the
+// roots, so they come out of him rather than being stuck on.
+static void mwArms(TFT_eSPI& t, int cx, int fy, int hw, int hh, int lean) {
+    if (s_mArmK <= 0) return;
+    const int k = s_mArmK, rk = k > 90 ? k : 90;
+    const int L1 = MW_W * 16 * 24 / 100 * k / 256, L2 = MW_W * 16 * 20 / 100 * k / 256;
+    const int rS = 38 * rk / 256, rE = 28 * rk / 256, rH = 19 * rk / 256, rL = 27 * rk / 256;
+    int P[2][6];
+    for (int s = 0; s < 2; s++) {
+        const int dir = s ? 1 : -1;
+        const int sx = (cx + dir * hw * 86 / 100 + lean / 2) * 16, sy = (fy - hh * 95 / 100) * 16;
+        const int a1 = s_mArm[s * 2] * 256 / 360, a2 = (s_mArm[s * 2] + s_mArm[s * 2 + 1]) * 256 / 360;
+        const int ex = sx + dir * mwSin(a1) * L1 / 256, ey = sy + mwCos(a1) * L1 / 256;
+        P[s][0] = sx; P[s][1] = sy; P[s][2] = ex; P[s][3] = ey;
+        P[s][4] = ex + dir * mwSin(a2) * L2 / 256; P[s][5] = ey + mwCos(a2) * L2 / 256;
+    }
+    for (int pad = 1; pad >= 0; pad--) {
+        const uint16_t c = pad ? MW_LINE : MW_BODY;
+        for (int s = 0; s < 2; s++) {
+            mwLimb(t, P[s][0], P[s][1], P[s][2], P[s][3], rS, rE, pad, c);
+            mwLimb(t, P[s][2], P[s][3], P[s][4], P[s][5], rE, rH, pad, c);
+            mwLimb(t, P[s][4], P[s][5], P[s][4], P[s][5], rL, rL, pad, c);   // the hand, a lump
+        }
+    }
+}
+// Grows the arms toward out (want) or back in, keeping the last pose while they
+// sink so they go back in the way they came.
+static void mwArmsStep(bool want, const int16_t* pose, uint32_t ms) {
+    const int d = (int)(ms * 256 / MW_ARM_GROW_MS);
+    if (want) {
+        for (int i = 0; i < 4; i++) s_mArm[i] = pose[i];
+        s_mArmK = s_mArmK + d > 256 ? 256 : s_mArmK + d;
+    } else {
+        s_mArmK = s_mArmK - d < 0 ? 0 : s_mArmK - d;
+    }
+}
+static inline int mwWig(uint32_t e, uint32_t period, int amp) { return Theme::isin256((uint16_t)(e * 65536u / period)) * amp / 256; }
+
 // Specks: (angle, distance out x100, length), turning with him.
 static const uint8_t MW_SPECKS[12][3] = {
     { 16, 82, 2 }, { 45, 86, 1 }, { 69, 80, 2 }, { 94, 84, 1 }, { 116, 78, 2 }, { 139, 86, 1 },
@@ -380,9 +468,10 @@ static const uint8_t MW_HAIRS[2] = { 72, 59 };   // out of the top
 static void mwBall(TFT_eSPI& t, int cx, int fy, int W, int H, int sw, int sh, int rot8, int lean,
                    MFace f, uint32_t now, bool mouthMoving, bool air) {
     if (!air) mDim(t, cx - W * sw / 600, fy, W * sw / 300, 2, 128);
+    const int hw = W * sw / 512, hh = H * sh / 512;
+    if (s_mArmsDraw) mwArms(t, cx, fy, hw, hh, lean);
     mwRaster(cx, fy, W, H, sw, sh, rot8, lean);
     mwPaint(t, MW_BODY);
-    const int hw = W * sw / 512, hh = H * sh / 512;
     // the face's box, kept clear of specks
     const int fx0 = cx - W * 30 / 100, fx1 = cx + W * 42 / 100, fy0 = fy - hh * 2 * 68 / 100;
     for (uint8_t i = 0; i < 12; i++) {
@@ -514,7 +603,8 @@ static void meatyRelease(uint32_t now) {
         default: s_mPh = MPh::NONE; break;
     }
 }
-// The console's and the emulator's: 0 igloo, 1 hot dog, 2 Shake it, 3 three of him.
+// The console's and the emulator's: 0 igloo, 1 hot dog, 2 Shake it, 3 three of him, 4 the dance,
+// 5-9 a line with a gesture (wave, shrug, hands on hips, scratch, point).
 void meatyAct(int8_t which) { if (meatyOn()) s_mAct = which; }   // only when he is the pet
 
 static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
@@ -571,6 +661,7 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     }
     if (!s_mNextTip) s_mNextTip = now + 8000;
     if (!s_mNextRoll) s_mNextRoll = now + 30000 + (uint32_t)random(0, 20000);
+    if (!s_mNextDance) s_mNextDance = now + 40000 + (uint32_t)random(0, 20001);
     // His eyes wander now and then.
     if (now - s_mLookAt > 1700) { s_mLookAt = now; static const int8_t L[5] = { 0, -1, 1, 0, 0 }; s_mLook = L[random(0, 5)]; }
     const bool rolling = petHopping(s_mHop, now);
@@ -583,6 +674,8 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
         if (act == 0) { mwShape(MForm::IGLOO, now, MW_FORM_MS); mwSay(mwLine(MWL_SCARED + random(0, MWL_SCARED_N)), now, false); }
         else if (act == 1) { mwShape(MForm::DOG, now, MW_FORM_MS); mwSay(mwLine(MWL_DOG + random(0, MWL_DOG_N)), now, false); }
         else if (act == 2) { mwShape(MForm::SHAKE, now, 4000); mwSay(mwLine(MWL_SHAKE + random(0, MWL_SHAKE_N)), now, false); }
+        else if (act >= 5 && act <= 9) { mwSay(mwLine(MWL_TIPS + s_mTip++ % MWL_TIPS_N), now, false); s_mGest = (int8_t)(act - 5); s_mGestAt = now ? now : 1; }
+        else if (act == 4) { mwShape(MForm::DANCE, now, mwDanceMs()); mwSay(mwLine(MWL_DANCE + random(0, MWL_DANCE_N)), now, false); s_mNextDance = mwNextDance(now); }
         else if (act == 3) { s_mPh = MPh::SPLIT; s_mThAt = now; s_mF.x = (float)(s_mX > -50 ? s_mX : (s_mSpotB ? b : a)); s_mF.y = (float)bot; mwSay(mwLine(MWL_SPLIT + random(0, MWL_SPLIT_N)), now, false); }
         s_mAnswered = true;
     }
@@ -614,14 +707,27 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
             else if (Clock::night() && random(0, 3) == 0) l = mwLine(MWL_NIGHT + random(0, MWL_NIGHT_N));
             mwSay(l, now, false);
             s_mBackEat = false;
+            // Half the time he says it with his hands.
+            if (random(0, 2) == 0) { s_mGest = (int8_t)random(0, 5); s_mGestAt = now ? now : 1; }
         }
+        s_mBackDance = false;
         s_mNextTip = mwNextTalk(now);
+    }
+    // His bad dance, about once a minute, with a line to go with it.
+    if ((int32_t)(now - s_mNextDance) >= 0 && !mwTalking() && !busy) {
+        mwShape(MForm::DANCE, now, mwDanceMs());
+        mwSay(mwLine(MWL_DANCE + random(0, MWL_DANCE_N)), now, false);
+        s_mBackEat = false;
+        s_mBackDance = true;
+        s_mNextDance = mwNextDance(now);
     }
     const bool talking = mwTalking();
     const bool mouthMoving = talking && now - s_mSaidAt < MW_MOUTH_MS;
     if (s_mLine && !talking && !s_mAnswered) {
         s_mAnswered = true;
-        if (random(0, 2) == 0) Squachy::visitSay(s_mBackEat ? MW_BACK_EAT[random(0, 4)] : MW_BACK_TIP[random(0, 4)]);
+        // After the dance he always has something to say about it.
+        if (s_mBackDance) { Squachy::visitSay(MW_BACK_DANCE[random(0, 4)]); s_mBackDance = false; }
+        else if (random(0, 2) == 0) Squachy::visitSay(s_mBackEat ? MW_BACK_EAT[random(0, 4)] : MW_BACK_TIP[random(0, 4)]);
     }
     if (!talking && !busy && (int32_t)(now - s_mNextRoll) >= 0 && a != b) {
         const int from = s_mSpotB ? b : a;
@@ -694,6 +800,7 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
             s_mY = (int16_t)lroundf(s_mF.y);
             mwAnchor(s_mX, s_mY);
             if (s_mPh == MPh::SPLIT) {
+                s_mArmK = 0;                                    // three of him, no arms
                 // Three of him: apart, a moment, and rolling back together.
                 const uint32_t e = now - s_mThAt;
                 int k = e < 360 ? (int)(e * 256 / 360) : e < 1800 ? 256 : 256 - (int)((e - 1800) * 256 / (MW_SPLIT_MS - 1800));
@@ -706,7 +813,14 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
             } else {
                 if (s_mPh == MPh::SPLAT) turnBy(s_mX);          // rolling to a stop
                 else s_mLastX = s_mX;                           // held, or flying (the flight turns him)
+                // Flying, or dangling: arms everywhere.
+                const bool flail = s_mPh == MPh::AIR || (s_mPh == MPh::HELD && s_mG.moved);
+                const int16_t fl[4] = { (int16_t)(100 + mwWig(now, 440, 60)), (int16_t)mwWig(now, 345, 50),
+                                        (int16_t)(100 + mwWig(now + 170, 400, 60)), (int16_t)mwWig(now + 90, 310, 50) };
+                mwArmsStep(flail, fl, seenMs);
+                s_mArmsDraw = true;
                 mwBall(t, s_mX, s_mY, MW_W, MW_H, sw, sh, s_mRot >> 4, 0, f, now, false, air);
+                s_mArmsDraw = false;
             }
             if (mwTalking() && (s_mPh == MPh::SPLAT || s_mPh == MPh::SPLIT)) {
                 petBalloon(t, s_mLine, s_mX - MW_SW / 2, s_mY - MW_SH, MW_SW, screenW, screenH);
@@ -766,7 +880,8 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
     else s_mScaredAt = 0;
 
     // ---- his shapes: a poof down, the shape, a poof back ----
-    if (mwInForm(now) && s_mForm != MForm::SHAKE) {
+    if (mwInForm(now) && s_mForm != MForm::SHAKE && s_mForm != MForm::DANCE) {
+        s_mArmK = 0;                        // an igloo or a hot dog has no arms
         const uint32_t e = now - s_mFormAt;
         int k = 256;
         if (e < MW_POOF_MS) k = (int)(e * 256 / MW_POOF_MS);
@@ -782,7 +897,24 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
         }
     } else {
         int lean = 0, sw = swell, sh = swell, lift = 0;
-        if (mwInForm(now) && s_mForm == MForm::SHAKE) {
+        // What the arms are doing, if anything.
+        bool arms = false;
+        int16_t pose[4] = { 16, 10, 16, 10 };
+        if (mwInForm(now) && s_mForm == MForm::DANCE) {
+            // The bad dance: step to step with no easing, everything a beat off.
+            uint32_t e = now - s_mFormAt;
+            uint8_t i = 0;
+            while (i + 1 < MW_DANCE_N && e >= MW_DANCE[i].ms) { e -= MW_DANCE[i].ms; i++; }
+            const MwStep& st = MW_DANCE[i];
+            const int j = mwWig(now, 180, 8);                 // jitter, all of it
+            pose[0] = (int16_t)(st.l1 * 2 + j); pose[1] = (int16_t)(st.l2 * 2 - j);
+            pose[2] = (int16_t)(st.r1 * 2 - j); pose[3] = (int16_t)(st.r2 * 2 + j);
+            arms = true;
+            lean = st.lean;
+            lift = st.lift;
+            if (e < 90) { sh = swell - 24; sw = swell + 14; lift = 0; }   // landing every step, a bit hard
+            if (!talking) face = MFace::HAPPY;
+        } else if (mwInForm(now) && s_mForm == MForm::SHAKE) {
             // Shake it: a sway that is mostly hips, and no rhythm at all.
             const uint32_t e = now - s_mFormAt;
             const int s1 = Theme::isin256((uint16_t)(e * 65536u / 690u));
@@ -792,10 +924,39 @@ static void meatyTick(TFT_eSPI& t, uint32_t now, int screenW, int floorY) {
             const int s2 = Theme::isin256((uint16_t)(e * 65536u / 1380u));
             lift = (s2 < 0 ? -s2 : s2) * 3 / 256;
             if (!talking) face = MFace::HAPPY;
+            // ...and the roof, raised.
+            const int r = mwWig(e, 690, 22);
+            pose[0] = (int16_t)(150 + r); pose[1] = 25; pose[2] = (int16_t)(150 - r); pose[3] = 25;
+            arms = true;
         } else if (s_mHop.at && since >= s_mHop.ms && since < s_mHop.ms + 160) {
             sh = swell - 30 * (int)(s_mHop.ms + 160 - since) / 160;      // settling after the roll
         }
+        // A gesture, while he says the line it came with.
+        if (!arms && s_mGest >= 0 && !rolling && !eating && morselY <= -1000) {
+            // Signed: a gesture stamped this tick can read as a millisecond ahead.
+            const int32_t es = (int32_t)(now - s_mGestAt);
+            const uint32_t e = es < 0 ? 0 : (uint32_t)es;
+            if (e < MW_GEST_MS && talking) {
+                arms = true;
+                // Squachy is on his left unless he has gone round to the other side.
+                const int tow = s_mLeft ? 2 : 0, away = s_mLeft ? 0 : 2;
+                switch (s_mGest) {
+                    case 0:  pose[2] = 150; pose[3] = (int16_t)mwWig(e, 690, 25); face = MFace::HAPPY; break;   // wave
+                    case 1: { const int b = mwWig(e, 1630, 10); pose[0] = pose[2] = (int16_t)(70 + (b < 0 ? -b : b)); pose[1] = pose[3] = 80; break; }   // shrug
+                    case 2:  pose[0] = pose[2] = 62; pose[1] = pose[3] = -150; break;   // hands on hips
+                    case 3:  pose[2] = (int16_t)(168 + mwWig(e, 440, 6)); pose[3] = -118; s_mLook = 1; break;   // scratch his head
+                    default: pose[tow] = (int16_t)(96 + mwWig(e, 1880, 3)); pose[tow + 1] = 0; pose[away] = 20; pose[away + 1] = 15;   // point at Squachy
+                             s_mLook = s_mLeft ? 1 : -1; break;
+                }
+            } else if (e >= MW_GEST_MS) {
+                s_mGest = -1;
+            }
+        }
+        if (rolling) arms = false;
+        mwArmsStep(arms, pose, seenMs);
+        s_mArmsDraw = true;
         mwBall(t, s_mX, s_mY - lift, MW_W, MW_H, sw, sh, s_mRot >> 4, lean, face, now, mouthMoving, hop < -0.5f);
+        s_mArmsDraw = false;
     }
     if (morselY > -1000) mwMorsel(t, s_mX - MW_W * 4 / 100, morselY, s_mEatCol);
     if (talking && !rolling) {
@@ -816,6 +977,9 @@ static void meatyReset() {
     s_mPending = 0;
     s_mLine = nullptr;
     s_maValid = false;
+    s_mArmK = 0;
+    s_mGest = -1;
+    s_mNextDance = 0;
 }
 // Called every frame he is not the pet on screen (another pet chosen, or the
 // ball out): the first such frame puts everything he was in the middle of

@@ -608,16 +608,18 @@ void pollSerial() {
         if (strcasecmp(line, "YETI DISCO") == 0) { Pet::yetiDance(0); Serial.println("[yeti] disco"); continue; }
         if (strcasecmp(line, "YETI FLOSS") == 0) { Pet::yetiDance(1); Serial.println("[yeti] floss"); continue; }
         if (strcasecmp(line, "TOASTER") == 0) { g_consoleToaster = true; continue; }
-        // MEATY unlocks him; MEATY IGLOO / DOG / SHAKE / SPLIT, his shapes on demand.
+        // MEATY unlocks him; MEATY IGLOO / DOG / SHAKE / SPLIT / DANCE, his shapes on demand.
         if (strcasecmp(line, "MEATY") == 0) { g_consoleMeaty = true; continue; }
         if (strncasecmp(line, "MEATY ", 8) == 0) {
             const char* w = line + 8;
             // MEATY LOCK: take him back, so the igloo can be knocked on again.
             // A board with the master unlock gets him back at the next boot.
             if (strcasecmp(w, "LOCK") == 0) { Squachy::relockMeaty(); Serial.println("[meaty] locked: knock on the SNOWFALL igloo"); continue; }
-            const int8_t k = strcasecmp(w, "IGLOO") == 0 ? 0 : strcasecmp(w, "DOG") == 0 ? 1 : strcasecmp(w, "SHAKE") == 0 ? 2 : strcasecmp(w, "SPLIT") == 0 ? 3 : -1;
+            const int8_t k = strcasecmp(w, "IGLOO") == 0 ? 0 : strcasecmp(w, "DOG") == 0 ? 1 : strcasecmp(w, "SHAKE") == 0 ? 2 : strcasecmp(w, "SPLIT") == 0 ? 3 : strcasecmp(w, "DANCE") == 0 ? 4 :
+                             strcasecmp(w, "WAVE") == 0 ? 5 : strcasecmp(w, "SHRUG") == 0 ? 6 : strcasecmp(w, "HIPS") == 0 ? 7 :
+                             strcasecmp(w, "SCRATCH") == 0 ? 8 : strcasecmp(w, "POINT") == 0 ? 9 : -1;
             if (k >= 0) { Pet::meatyAct(k); Serial.printf("[meaty] %s (if he is the pet on screen)\n", w); }
-            else Serial.println("[meaty] MEATY IGLOO | DOG | SHAKE | SPLIT");
+            else Serial.println("[meaty] MEATY IGLOO | DOG | SHAKE | SPLIT | DANCE | WAVE | SHRUG | HIPS | SCRATCH | POINT");
             continue;
         }
         if (strcasecmp(line, "BALL") == 0)    { g_consoleBall = true; continue; }

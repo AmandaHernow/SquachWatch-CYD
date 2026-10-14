@@ -129,6 +129,14 @@ GROUPS = [
         "Look at my moves! Ain't they movin'?",
         "Don't tell nobody I can dance.",
     ]),
+    ('DANCE', [
+        "Watch this. I been practicin'.",
+        "This one's called The Meatball.",
+        'I learned this off the TV. The TV was off.',
+        'Everybody do it with me! Nobody? Okay.',
+        "Five, six, seven, eight! I don't know nine.",
+        "Don't clap yet. I ain't done.",
+    ]),
     ('CATCH', [
         "I ate the camera. It was lookin' at me funny.",
         'A body camera. Tasted official.',
