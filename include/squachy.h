@@ -410,6 +410,9 @@ namespace Squachy {
     // How tall his speech bubble comes out for `text` on this panel, wrapped
     // as drawn: for a screen that has to leave room for it (the boot splash).
     int bubbleHeight(TFT_eSPI& t, const char* text);
+    // His bubble saying `text`, centred on cx with its top at topY, no tail:
+    // the FONTS page's preview.
+    void drawSampleBubble(TFT_eSPI& t, int cx, int topY, const char* text);
     // While on, his bubble keeps the 2.8"'s text size on the big panels too.
     // Set around one draw and cleared after, like the previews.
     void setBubbleSmall(bool on);

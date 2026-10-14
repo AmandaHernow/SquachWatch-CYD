@@ -57,6 +57,9 @@ namespace Pet {
     // layer, drawn now at the screen's own size. Call after the layer is
     // laid down; does nothing when none is waiting.
     void drawHeldBalloons(TFT_eSPI& t);
+    // A pet's balloon saying `text`, its tail on a box at (x, y) w wide: the
+    // FONTS page's preview of PETS.
+    void drawSampleBalloon(TFT_eSPI& t, int x, int y, int w, const char* text);
     // Picking him up. A touch that lands on him grabs him at once; every
     // frame it is held drags him; letting go is a poke when the finger never
     // went anywhere, a throw when it was still moving, and a drop otherwise.

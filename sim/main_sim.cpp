@@ -597,6 +597,17 @@ int main(int argc, char** argv) {
     if (getenv("SQUACHSIM_PRIVACY") && !Settings::privacyMode()) Settings::togglePrivacyMode();
     // SQUACHSIM_CLASSIC=1: DETECTIONS set to CLASSIC (NEARBY and the full counter rows).
     if (getenv("SQUACHSIM_CLASSIC") && Settings::detXp()) Settings::toggleDetXp();
+    // SQUACHSIM_FONTS=mtbs: the FONTS page's four sliders, one digit each for
+    // MENUS, TEXT, BUTTONS, BUBBLES -- 0..4 for -2..+2, 2 as built.
+    // SQUACHSIM_FONTPREVIEW=k: which kind the page's preview box shows.
+    if (const char* fp = getenv("SQUACHSIM_FONTPREVIEW")) uiSettingsSetFontPreview((uint8_t)atoi(fp));
+    // SQUACHSIM_FONTFACES=mtbsx: a face per kind, 0 as built, 1 PIXEL, 2 SMOOTH.
+    if (const char* ff = getenv("SQUACHSIM_FONTFACES"))
+        for (int i = 0; i < (int)Settings::FontKind::COUNT && ff[i]; i++)
+            Settings::setFontFace((Settings::FontKind)i, (uint8_t)(ff[i] - '0'));
+    if (const char* f = getenv("SQUACHSIM_FONTS"))
+        for (int i = 0; i < (int)Settings::FontKind::COUNT && f[i]; i++)
+            Settings::setFontStep((Settings::FontKind)i, (uint8_t)(f[i] - '0'));
     // SQUACHSIM_HEADSUP=TYPE|NAME: a squad heads-up arriving, the way
     // main.cpp shows one (banner plus Squachy's line), e.g. 1|NESSIE for a
     // Flock. The banner is drawn on CLEAR only while this is set.

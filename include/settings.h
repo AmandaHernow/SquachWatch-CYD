@@ -149,6 +149,17 @@ namespace Settings {
     bool       detXp();
     void       toggleDetXp();
 
+    // FONTS on the APPEARANCE page: a slider per kind of text, around the
+    // size each board was built with. 0..4 for -2..+2; 2 is as built. Theme
+    // decides what a step means on this board and how far it can go
+    // (Theme::fontDelta(), Theme::fontRange()).
+    enum class FontKind : uint8_t { MENUS = 0, TEXT, BUTTONS, BUBBLES, XP_TILES, PETS, COUNT };
+    uint8_t    fontStep(FontKind k);
+    void       setFontStep(FontKind k, uint8_t step);
+    // And a face: 0 as built, 1 PIXEL, 2 SMOOTH (Theme::fontSmooth()).
+    uint8_t    fontFace(FontKind k);
+    void       setFontFace(FontKind k, uint8_t face);
+
     // Last rotation (0..3, TFT_eSPI's setRotation() values) the rotate
     // button left the screen on -- so it comes back up the same way
     // after a power cycle instead of always resetting to the board's

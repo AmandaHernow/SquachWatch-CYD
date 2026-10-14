@@ -2964,6 +2964,15 @@ static void drawXpTile(TFT_eSPI& t, int x, int y, int w, int h, const char* txt,
     t.setTextSize(1);
 }
 
+// The FONTS page's preview: one tile, lit, at the scale the main screen
+// draws them. Returns its width.
+int uiClearSampleTile(TFT_eSPI& t, int x, int y, const char* txt, uint16_t iconCol) {
+    const int k = Theme::xpTileScale();
+    const int w = ((int)strlen(txt) * XP_ADV + 10 + XP_ICON_W) * k;
+    drawXpTile(t, x, y, w, 12 * k, txt, iconCol, 0, 5 * k, k);
+    return w;
+}
+
 // CLASSIC's counters: one plain line of LABEL:COUNT pairs.
 static void drawCounterLine(TFT_eSPI& t, int w, int y, const DetectionEngine& eng,
                             const DetectionType* types, uint8_t n) {
@@ -3375,12 +3384,23 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     // the colour and the count alone, in ONE row (asked for 2026-10-10);
     // selecting one still opens what it counts, which is where the name is.
     const bool miniTiles    = Theme::compact();
-    const uint8_t extraRows = 0;
-    const uint8_t rowsKept  = miniTiles ? 1
-                            : (extraRows && s_tileRowsLast > counterRows) ? s_tileRowsLast : counterRows;
     // The tiles' own row height: twice the counters' on the large panels,
     // where every tile is drawn at double size (drawXpTile's k).
-    const int tileK         = Theme::large() ? 2 : 1;
+    // FONTS > XP TILES moves it between the two (Theme::xpTileScale()). Made
+    // BIGGER than the panel draws them, they may take one more row; a day
+    // too crowded for even that draws them at the panel's own size until
+    // there are fewer kinds again (the fit below sets s_bigTilesFrom).
+    static uint8_t s_bigTilesFrom = 0;      // kinds that did not fit big; 0 = none yet
+    static int     s_bigTilesW = 0;         // ...on a panel this wide
+    static uint8_t s_tileKindsLast = 0;     // kinds the tiles showed last frame
+    const int tileNative    = Theme::large() ? 2 : 1;
+    if (s_bigTilesW != w) { s_bigTilesFrom = 0; s_bigTilesW = w; }
+    int tileWant            = Theme::xpTileScale();
+    if (tileWant > tileNative && s_bigTilesFrom && s_tileKindsLast >= s_bigTilesFrom) tileWant = tileNative;
+    const int tileK         = tileWant;
+    const uint8_t extraRows = (!miniTiles && tileK > tileNative) ? 1 : 0;
+    const uint8_t rowsKept  = miniTiles ? 1
+                            : (extraRows && s_tileRowsLast > counterRows) ? s_tileRowsLast : counterRows;
     const int tileLineH     = lineH * tileK;
     const int bandTop       = xp ? tilesTop + rowsKept * tileLineH : titleBottom;
     const int squachyBottom = xp ? bar.y - 1 : counterTextTop - 2;
@@ -3448,12 +3468,12 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     const bool step = uiMascotStep(now, advance);
     // His bubble rises past the tiles to row 1, where it always sat. Undone
     // straight after he is drawn: the desk and the alert cameo want theirs.
-    // XP: his bubble rises to just under last frame's tiles, or to the top
-    // row when there are none -- not onto them.
-    // On the large panels it rises to the top row regardless: his bubble is
-    // twice the size there, and under the tiles it sat across his own head.
-    // The tiles it covers wait for it to go (underBubble, below).
-    if (xp) Squachy::setBubbleRiseTo((s_tileRowsLast && !Theme::large()) ? tilesTop + s_tileRowsLast * tileLineH + 1 : 1);
+    // XP: his bubble -- and a visitor's -- rises to just under last frame's
+    // tiles, or to the top row when there are none: never onto them, on any
+    // panel (asked for 2026-10-13; the large panels used to rise over the
+    // tiles and hide the ones underneath). The pets' balloons keep under the
+    // same edge (Pet::tick's band top).
+    if (xp) Squachy::setBubbleRiseTo(s_tileRowsLast ? tilesTop + s_tileRowsLast * tileLineH + 1 : 1);
 
     // Squachy: main character, reacts to events, cracks jokes when idle.
     // His available region runs all the way to countersTop (not
@@ -3891,6 +3911,11 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
             }
             counterN = keep;
         }
+        // Bigger than the panel's own and still no fit: back to its own size
+        // from the next frame, for as long as there are this many kinds.
+        if (counterN && !rowsUsed && tileK > tileNative) s_bigTilesFrom = counterN;
+        else if (s_bigTilesFrom && counterN < s_bigTilesFrom) s_bigTilesFrom = 0;
+        s_tileKindsLast = counterN;
         if (counterN && !rowsUsed) rowsUsed = counterRows + extraRows;
         s_tileRowsLast = rowsUsed;
         // A kind that has just turned up flashes orange for a few seconds, the

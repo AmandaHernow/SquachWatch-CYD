@@ -2219,10 +2219,30 @@ static int         s_ownCx = 0, s_ownTopY = 0, s_ownTail = 0;
 static const char* s_deferLine   = nullptr;
 static int         s_deferCx = 0, s_deferY = 0, s_deferTail = 0;
 
+// The bubble's face for `text`. Above the size the board was built with
+// (FONTS > BUBBLES), a line that would run out of the bubble's lines steps
+// the face down until it fits, or is back at that size: a bigger bubble
+// never loses the end of what he said.
+static void speechFace(TFT_eSPI& t, const char* text) {
+    Theme::speechFontOn(t, s_bubbleSmall);
+    t.setTextWrap(false);
+    while (Theme::speechAboveNormal()) {
+        const int k = Theme::speechScale();
+        const int screenW = t.width();
+        int maxW = screenW - 16;
+        if (k > 1 && maxW > screenW - 2 * CORNER_W - 2) maxW = screenW - 2 * CORNER_W - 2;
+        if (t.textWidth(text) <= maxW - 10) return;
+        char lines[BUBBLE_MAX_LINES + 1][48];
+        const uint8_t maxL = k > 1 ? BUBBLE_MAX_LINES : 2;
+        if (Theme::wrapText(t, text, maxW - 10, lines, maxL + 1) <= maxL) return;
+        Theme::speechFontSmaller(t);
+    }
+}
+
 static void drawBubble(TFT_eSPI& t, int cx, int topY, const char* text,
                        uint32_t now, bool mayRise = false, int tailX = NO_TAIL) {
     if (s_bubbleHeld) return;
-    Theme::bubbleFontOn(t);
+    speechFace(t, text);
     drawBubbleIn(t, cx, topY, text, now, mayRise, tailX);
     Theme::bubbleFontOff(t);
     t.setTextSize(1);
@@ -2233,8 +2253,9 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
                          uint32_t now, bool mayRise, int tailX) {
     // Twice the size on the 3.5" boards, where the 2.8"'s 16 rows read as
     // small print. Only his own bubble: the other screens that share the
-    // font are laid out around 16 rows.
-    const int k = (Theme::large() && !s_bubbleSmall) ? 2 : 1;
+    // font are laid out around 16 rows. FONTS > BUBBLES moves it a rung
+    // either way (Theme::speechFontOn()).
+    const int k = Theme::speechScale();
     t.setTextSize(k);
     t.setTextWrap(false);
     int screenW = t.width();
@@ -2249,7 +2270,7 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
     if (tw <= maxW - 10) {
         // Fits on one line -- the original compact box.
         int bw = tw + 10;
-        int bh = Theme::bubbleTextH() * k + 6;
+        int bh = Theme::speechTextH() * k + 6;
         int bx = cx - bw / 2;
         if (bx + bw > screenW - 2) bx = screenW - 2 - bw;
         if (bx < 2) bx = 2;
@@ -2259,7 +2280,7 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
         t.drawRoundRect(bx, by, bw, bh, 3, Theme::VAPOR_PINK);
         if (s_bubbleTone == 1) t.drawRoundRect(bx - 1, by - 1, bw + 2, bh + 2, 4, Theme::AMBER);
         t.setTextColor(s_bubbleTone == 2 ? Theme::W95_LIGHT : Theme::WHITE, Theme::BG);
-        t.setCursor(bx + 5, by + 3 + Theme::bubbleAscent());
+        t.setCursor(bx + 5, by + 3 + Theme::speechAscent());
         t.print(text);
         lastBubbleX = bx;
         lastBubbleY = by;
@@ -2286,7 +2307,7 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
     char lines[BUBBLE_MAX_LINES][48];
     uint8_t n = Theme::wrapText(t, text, bw - 10, lines, k > 1 ? BUBBLE_MAX_LINES : 2);
 
-    const int lineH = Theme::bubbleTextH() * k + 1;
+    const int lineH = Theme::speechTextH() * k + 1;
     int bh = 3 + (int)n * lineH + 3;
 
     // Asked the same question, and the width answers it: a wrapped box is
@@ -2301,7 +2322,7 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
     t.setTextColor(s_bubbleTone == 2 ? Theme::W95_LIGHT : Theme::WHITE, Theme::BG);
     for (uint8_t i = 0; i < n; i++) {
         int lw = t.textWidth(lines[i]);
-        t.setCursor(bx + (bw - lw) / 2, by + 3 + i * lineH + Theme::bubbleAscent());
+        t.setCursor(bx + (bw - lw) / 2, by + 3 + i * lineH + Theme::speechAscent());
         t.print(lines[i]);
     }
     lastBubbleX = bx;
@@ -7806,11 +7827,19 @@ bool cameoBubble(int& x, int& y, int& w, int& h) {
 }
 
 void deferBubble(bool on) { s_bubbleDefer = on; }
+// The FONTS page's preview: his bubble exactly as he would say `text`, with
+// no tail and the pop already over.
+void drawSampleBubble(TFT_eSPI& t, int cx, int topY, const char* text) {
+    speechFace(t, text);
+    drawBubbleIn(t, cx, topY, text, bubbleStart + BUBBLE_POP_MS, false, NO_TAIL);
+    Theme::bubbleFontOff(t);
+    t.setTextSize(1);
+}
 // How tall his bubble comes out for `text` on this panel, without drawing
 // it: the same font, size and wrap width drawBubbleIn() uses.
 int bubbleHeight(TFT_eSPI& t, const char* text) {
-    Theme::bubbleFontOn(t);
-    const int k = (Theme::large() && !s_bubbleSmall) ? 2 : 1;
+    speechFace(t, text);
+    const int k = Theme::speechScale();
     t.setTextSize(k);
     t.setTextWrap(false);
     const int screenW = t.width();
@@ -7818,11 +7847,11 @@ int bubbleHeight(TFT_eSPI& t, const char* text) {
     if (k > 1 && maxW > screenW - 2 * CORNER_W - 2) maxW = screenW - 2 * CORNER_W - 2;
     int h;
     if (t.textWidth(text) <= maxW - 10) {
-        h = Theme::bubbleTextH() * k + 6;
+        h = Theme::speechTextH() * k + 6;
     } else {
         char lines[BUBBLE_MAX_LINES][48];
         const uint8_t n = Theme::wrapText(t, text, maxW - 10, lines, k > 1 ? BUBBLE_MAX_LINES : 2);
-        h = 6 + (int)n * (Theme::bubbleTextH() * k + 1);
+        h = 6 + (int)n * (Theme::speechTextH() * k + 1);
     }
     Theme::bubbleFontOff(t);
     t.setTextSize(1);
