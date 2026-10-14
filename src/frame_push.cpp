@@ -771,6 +771,13 @@ static void busStepAside() {
     if (!s_bus || xSemaphoreGetMutexHolder(s_bus) != xTaskGetCurrentTaskHandle()) return;
     xSemaphoreGiveRecursive(s_bus);
     taskYIELD();
+    // The give only makes the waiter READY. The T-Deck's radio task is a
+    // lower priority than this one, or on the other core, and either way
+    // the take below won the race nearly every time: the radio got the bus
+    // only between frames, 14-27 ms of waiting per turn (2026-10-13). So
+    // sleep a tick at a time until it has the lock (busLock() clears the
+    // flag once it does), a few ticks at most.
+    for (int i = 0; i < 4 && s_busWanted; i++) vTaskDelay(1);
     if (xSemaphoreTakeRecursive(s_bus, pdMS_TO_TICKS(500)) != pdTRUE) {
         Serial.printf("[push] step-aside: the lock did not come back in 500 ms (holder %p)\n", (void*)xSemaphoreGetMutexHolder(s_bus));
         xSemaphoreTakeRecursive(s_bus, portMAX_DELAY);

@@ -62,6 +62,11 @@ volatile Mode     s_mode   = Mode::SURVEY;
 // A linger buys the rebroadcasts of what was just heard -- copies, for a
 // chat -- at the price of two seconds deaf to the other network.
 volatile bool     s_noLinger = false;
+// The T-Deck's BOTH: parked on the network with the short preamble (home,
+// MeshCore) and away only for a quick look at the long one (peek,
+// Meshtastic). 0xFF = not in use; the plain two-preset survey runs instead.
+volatile uint8_t  s_home = 0xFF;
+volatile uint8_t  s_peek = 0xFF;
 // Set by the task once it has seen OFF and put the radio in standby, so the
 // bench transmitter knows nothing else will touch the chip mid-frame.
 volatile bool     s_parked = false;
@@ -143,6 +148,21 @@ uint32_t cadMs(const Profile& p) {
 uint32_t maxFrameMs(const Profile& p) {
     return timeOnAirUs(p.sf, p.bwKhz10, 8, p.preamble, 255, true, false, (p.flags & PF_LDRO) != 0) / 1000 + 50;
 }
+// How long a profile's preamble is on the air, sync symbols included.
+uint32_t preambleMs(const Profile& p) {
+    return (symbolUs(p.sf, p.bwKhz10) * ((uint32_t)p.preamble + 4)) / 1000;
+}
+// The T-Deck's BOTH: how long to stay home between looks at the peek
+// profile. A look has to start early enough in the peek's preamble for the
+// CAD and then the receiver's lock (eight symbols, generously) to fit in
+// what is left of it; LongFast's 160 ms preamble leaves about 80 ms between
+// looks, less the look itself and some slack for a late wake.
+uint32_t homeMs(const Profile& peek) {
+    const uint32_t lock = (symbolUs(peek.sf, peek.bwKhz10) * (cadSymbols(peek) + 8u)) / 1000;
+    const uint32_t pre = preambleMs(peek);
+    int32_t ms = (int32_t)pre - (int32_t)lock - 15 - (int32_t)cadMs(peek) - 6;
+    return ms < 20 ? 20u : (uint32_t)ms;
+}
 
 void push(Packet& pk) {
     pk.ms = millis();
@@ -201,6 +221,120 @@ void noiseSample() {
     // A slow floor: drop at once, rise slowly.
     if (r < s_stats.noiseDbm || s_stats.noiseDbm == 0) s_stats.noiseDbm = r;
     else if (r > s_stats.noiseDbm + 1) s_stats.noiseDbm++;
+}
+
+// After a CAD hit the chip is in RX on p for a whole frame's time at most:
+// wait the frame out, or give up early when no preamble, then no header,
+// follows (the hit was noise). `f` is the flags the hit was read with. True
+// when a frame was read. `quick`: the T-Deck's look at Meshtastic, which
+// writes a silent hit off after four symbols rather than eight -- see
+// homeAndPeek().
+bool catchAfterHit(uint8_t idx, const Profile& p, uint16_t f, bool quick = false) {
+    const uint32_t frameMs = maxFrameMs(p);
+    bool header = false, preamble = (f & LoraRadio::IRQ_PREAMBLE) != 0;
+    const uint32_t t0 = millis();
+    const uint32_t hdrBy = headerDeadlineMs(p);
+    const uint32_t preBy = quick ? (symbolUs(p.sf, p.bwKhz10) * 4u) / 1000 + 6 : preambleDeadlineMs(p);
+    while (millis() - t0 < frameMs + 50) {
+        const uint32_t el = millis() - t0;
+        uint32_t wait = frameMs + 50 - el;
+        if (!preamble) {
+            if (el >= preBy) { LoraRadio::standby(); return false; }   // noise: no preamble
+            if (wait > preBy - el) wait = preBy - el;
+        }
+        if (!header) {
+            if (el >= hdrBy) { LoraRadio::standby(); return false; }   // noise: no header came
+            if (wait > hdrBy - el) wait = hdrBy - el;
+        }
+        if (!LoraRadio::waitIrq(wait)) continue;
+        f = LoraRadio::irq();
+        if (f & LoraRadio::IRQ_PREAMBLE) preamble = true;
+        if (f & LoraRadio::IRQ_HDR_VALID) { header = true; preamble = true; }
+        if (f & LoraRadio::IRQ_TIMEOUT) { LoraRadio::clearIrq(f); return false; }
+        if (handleIrq(idx)) return true;
+    }
+    return false;
+}
+
+// The T-Deck's BOTH, one cycle: plain reception at home (MeshCore) for
+// homeMs(), then one CAD on the peek profile (Meshtastic), and home again.
+// The plain two-preset survey gave each network a CAD in turn, and on the
+// T-Deck a round outlasted MeshCore's 65 ms preamble: it caught about one
+// MeshCore message in four (2026-10-13). Here MeshCore is heard all the time
+// but for the look, which is far shorter than its preamble, and Meshtastic's
+// preamble is long enough that a look every homeMs() + the look lands in it.
+// A look never starts while a frame is coming in at home. Bench, the watch
+// sending at 0 dBm: a look is ~32 ms away (46 at worst). The CAD calls
+// noise a preamble about twice a second; a real one raised PREAMBLE within
+// 21-26 ms of the hit, so a look's silent hit is dropped after four symbols
+// (39 ms), not eight (74). With that, 24 of 25 MeshCore and 25 of 25
+// Meshtastic messages came through, from about one MeshCore in four
+// (2026-10-13).
+void homeAndPeek(uint8_t& onIdx, bool& listening, uint32_t& lastNoise) {
+    static uint32_t homeSince = 0, busyUntil = 0;
+    const uint8_t home = s_home, peek = s_peek;
+    if (home == 0xFF || peek == 0xFF) return;
+    const Profile& hp = profile(home);
+    const Profile& pp = profile(peek);
+
+    if (onIdx != home || !listening) {
+        LoraRadio::busHold();
+        listening = LoraRadio::apply(hp) && LoraRadio::startReceive();
+        LoraRadio::busRelease();
+        onIdx = home; s_current = home;
+        homeSince = millis(); busyUntil = 0;
+        if (!listening) { vTaskDelay(pdMS_TO_TICKS(100)); return; }
+    }
+    s_listenStart = millis();
+    const uint32_t stay = homeMs(pp);
+    for (;;) {
+        if (s_mode != Mode::SURVEY || s_home != home || s_peek != peek) return;
+        const uint32_t now = millis();
+        uint32_t until = homeSince + stay;
+        if ((int32_t)(busyUntil - until) > 0) until = busyUntil;
+        if ((int32_t)(now - until) >= 0) break;
+        if (!LoraRadio::waitIrq(until - now)) continue;
+        LoraRadio::busHold();
+        const uint16_t f = LoraRadio::irq();
+        const uint32_t t = millis();
+        if (f & LoraRadio::IRQ_PREAMBLE)  busyUntil = t + headerDeadlineMs(hp);
+        if (f & LoraRadio::IRQ_HDR_VALID) busyUntil = t + maxFrameMs(hp);
+        if (f & (LoraRadio::IRQ_RX_DONE | LoraRadio::IRQ_HDR_ERR)) busyUntil = 0;
+        handleIrq(home);
+        LoraRadio::busRelease();
+    }
+    if (millis() - lastNoise > 1000) {
+        lastNoise = millis();
+        LoraRadio::busHold();
+        noiseSample();
+        LoraRadio::busRelease();
+    }
+
+    // The look. Tune and start the CAD in one turn on the bus.
+    listenSettle(millis());
+    LoraRadio::busHold();
+    const bool cadOn = LoraRadio::apply(pp) && LoraRadio::startCad(cadSymbols(pp), true, maxFrameMs(pp), cadPeak(pp));
+    LoraRadio::busRelease();
+    onIdx = peek; s_current = peek; listening = false;     // home wants a retune now
+    if (!cadOn) { vTaskDelay(pdMS_TO_TICKS(100)); return; }
+    s_stats.cadRounds++;
+    s_listenStart = millis();
+    if (!LoraRadio::waitIrq(cadMs(pp) + 30)) { LoraRadio::standby(); return; }
+    // The result and, when it is nothing, the way home in the same turn.
+    LoraRadio::busHold();
+    const uint16_t f = LoraRadio::irq();
+    if (!(f & LoraRadio::IRQ_CAD_HIT)) {
+        LoraRadio::clearIrq(f);
+        listenSettle(millis());
+        listening = LoraRadio::apply(hp) && LoraRadio::startReceive();
+        LoraRadio::busRelease();
+        if (listening) { onIdx = home; s_current = home; homeSince = millis(); busyUntil = 0; }
+        return;
+    }
+    s_stats.cadHits++;
+    LoraRadio::clearIrq((uint16_t)(LoraRadio::IRQ_CAD_HIT | LoraRadio::IRQ_CAD_DONE));
+    LoraRadio::busRelease();
+    catchAfterHit(peek, pp, f, true);
 }
 
 void task(void*) {
@@ -263,17 +397,22 @@ void task(void*) {
             continue;
         }
 
+        if (s_home != 0xFF && s_peek != 0xFF) {
+            onMode = Mode::SURVEY;
+            homeAndPeek(onIdx, listening, lastNoise);
+            continue;
+        }
+
         // SURVEY. A CAD on the next profile; on a hit the chip is already in
         // RX, so wait out the frame, then linger for whatever follows it.
         onMode = Mode::SURVEY;
         const uint8_t idx = nextSurveyProfile(onIdx == 0xFF ? profileCount() - 1 : onIdx);
         onIdx = idx; s_current = idx;
         const Profile& p = profile(idx);
-        const uint32_t frameMs = maxFrameMs(p);
         // The hop in one turn on the bus: see LoraRadio::busHold().
         LoraRadio::busHold();
         const bool tuned = LoraRadio::apply(p);
-        const bool cadOn = tuned && LoraRadio::startCad(cadSymbols(p), true, frameMs, cadPeak(p));
+        const bool cadOn = tuned && LoraRadio::startCad(cadSymbols(p), true, maxFrameMs(p), cadPeak(p));
         LoraRadio::busRelease();
         if (!tuned) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
         s_stats.cadRounds++;
@@ -293,28 +432,7 @@ void task(void*) {
         s_stats.cadHits++;
         LoraRadio::clearIrq((uint16_t)(LoraRadio::IRQ_CAD_HIT | LoraRadio::IRQ_CAD_DONE));
         LoraRadio::busRelease();
-        // The chip is in RX now, for frameMs at most.
-        bool got = false, header = false, preamble = (f & LoraRadio::IRQ_PREAMBLE) != 0;
-        const uint32_t t0 = millis();
-        const uint32_t hdrBy = headerDeadlineMs(p), preBy = preambleDeadlineMs(p);
-        while (millis() - t0 < frameMs + 50) {
-            const uint32_t el = millis() - t0;
-            uint32_t wait = frameMs + 50 - el;
-            if (!preamble) {
-                if (el >= preBy) { LoraRadio::standby(); break; }   // noise: no preamble
-                if (wait > preBy - el) wait = preBy - el;
-            }
-            if (!header) {
-                if (el >= hdrBy) { LoraRadio::standby(); break; }   // noise: no header came
-                if (wait > hdrBy - el) wait = hdrBy - el;
-            }
-            if (!LoraRadio::waitIrq(wait)) continue;
-            f = LoraRadio::irq();
-            if (f & LoraRadio::IRQ_PREAMBLE) preamble = true;
-            if (f & LoraRadio::IRQ_HDR_VALID) { header = true; preamble = true; }
-            if (f & LoraRadio::IRQ_TIMEOUT) { LoraRadio::clearIrq(f); break; }
-            if (handleIrq(idx)) { got = true; break; }
-        }
+        const bool got = catchAfterHit(idx, p, f);
         if (!got || s_noLinger) continue;
         // Linger: a frame came, so its answers are about to. Two seconds of
         // plain reception here, or until the mode changes under us.
@@ -651,6 +769,7 @@ void applyListen(uint8_t listen) {
     uint8_t mt = 0, mc = 0;
     const bool haveMt = meshProfile(Proto::MESHTASTIC, mt);
     const bool haveMc = meshProfile(Proto::MESHCORE, mc);
+    s_home = s_peek = 0xFF;
     switch (listen) {
         case 0: s_noLinger = false; setMode(Mode::OFF); break;
         case 1: s_noLinger = false; if (haveMt) { s_focus = mt; setMode(Mode::FOCUS); } break;
@@ -660,6 +779,15 @@ void applyListen(uint8_t listen) {
             // tens of milliseconds, far inside either network's preamble.
             s_survey = (haveMt ? (1ull << mt) : 0) | (haveMc ? (1ull << mc) : 0);
             s_noLinger = true;
+#if defined(TDECK_PLUS)
+            // The T-Deck parks on the short preamble and looks in on the long
+            // one: see homeAndPeek().
+            if (haveMt && haveMc) {
+                const bool mcShorter = preambleMs(profile(mc)) <= preambleMs(profile(mt));
+                s_peek = mcShorter ? mt : mc;
+                s_home = mcShorter ? mc : mt;
+            }
+#endif
             setMode(Mode::SURVEY);
             break;
     }
@@ -678,7 +806,7 @@ bool tap() { return s_tap; }
 Mode mode() { return s_mode; }
 void setFocus(uint8_t i) { if (i < profileCount()) s_focus = i; }
 uint8_t focus() { return s_focus; }
-void setSurveyMask(uint64_t m) { s_survey = m; }
+void setSurveyMask(uint64_t m) { s_survey = m; s_home = s_peek = 0xFF; }
 uint64_t surveyMask() { return s_survey; }
 uint8_t currentProfile() { return s_current; }
 
