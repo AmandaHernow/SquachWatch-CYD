@@ -30,6 +30,7 @@
 #include "ui_log.h"
 #include "ui_alert.h"
 #include "ui_settings.h"
+#include "sim_detections.h"   // simMakeDetection(), for --alert on a kind the seeds lack
 #include "ui_diary.h"
 #include "ui_hunt.h"
 #include "ui_rawscan.h"
@@ -1143,8 +1144,13 @@ int main(int argc, char** argv) {
                 const Detection* c = engine.logAt(i);
                 if (c && (int)c->type == alertType) { d = c; break; }
             }
+            // A kind the seed list does not carry (AXON, RAVEN, the trackers)
+            // is made up on the spot from its emulator profile, the way the
+            // live emulator's T command does -- so every kind can be alerted on.
+            static Detection synth;
+            if (!d && simMakeDetection(synth, (DetectionType)alertType, SimClock::nowMs)) d = &synth;
             if (!d) {
-                fprintf(stderr, "no seeded detection of type %d -- see seedDetections()\n",
+                fprintf(stderr, "no seeded detection or emulator profile of type %d\n",
                         alertType);
                 return 1;
             }

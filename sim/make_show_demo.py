@@ -32,6 +32,20 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.38.0 "Snoop Onto Them", 320x240: an Axon body-cam alert and a gunshot
+    # sensor's (--alert picks the kind), M3@ty's bad dance (SQUACHSIM_MEATY=4)
+    # and a wave while he talks (=5), the FONTS page with BUBBLES slid to
+    # HUGE and its preview (SQUACHSIM_FONTS digits are MENUS TEXT BUTTONS
+    # BUBBLES XP PETS, 0-4 around 2; FONTPREVIEW 3 = bubbles), and the main
+    # screen saying a line in that bubble, under the tiles.
+    "snoop-onto-them": [
+        ("alert", 40, 30, ["--alert", "2"], {}, 1800, "AXON BODY CAMS, NOW HEARD OVER BLUETOOTH."),
+        ("alert", 40, 30, ["--alert", "5"], {}, 1800, "GUNSHOT SENSORS: RAVEN, AND NOW SHOTSPOTTER."),
+        ("clear", 40, 110, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "4", "SQUACHSIM_BATT": "80"}, 1500, "M3@TY GREW ARMS. NOBODY ASKED HIM TO."),
+        ("clear", 40, 60, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "5", "SQUACHSIM_BATT": "80"}, 1500, "ONLY WHEN HE NEEDS THEM."),
+        ("settings", 10, 14, ["--scroll", "0"], {"SQUACHSIM_PAGE": "5", "SQUACHSIM_FONTS": "222322", "SQUACHSIM_FONTPREVIEW": "3"}, 1900, "APPEARANCE > FONTS. SLIDE UNTIL YOU CAN READ IT."),
+        ("clear", 40, 50, ["--bg", "5"], {"SQUACHSIM_FONTS": "222322", "SQUACHSIM_SAY": "Is this big enough for you?", "SQUACHSIM_BATT": "80"}, 1800, "BIGGER BUBBLES. AND UNDER THE TILES NOW."),
+    ],
     # v1.37.0 "Video Killed the Radio Star", 320x240: the igloo crossing SNOWFALL with two
     # eyes in its door, then M3@ty out beside Squachy (--pet 6) talking, eating
     # a catch (SQUACHSIM_CLIPCATCH drops one in), the hot dog (SQUACHSIM_MEATY=1),

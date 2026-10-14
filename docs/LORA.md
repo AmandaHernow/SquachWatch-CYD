@@ -59,10 +59,12 @@ a keyboard, it can also **send**.
 - **Listening:** the same networks, presets, band choice, pill and **LORA
   CHATS** as the watches. Settings > SYSTEM > **LORA** cycles BOTH,
   MESHTASTIC, MESHCORE and OFF.
-- **BOTH favours Meshtastic.** Taking turns, the T-Deck catches most
-  Meshtastic messages but only about one MeshCore message in four: MeshCore
-  announces each message for 65 ms, and the turn often comes round too late.
-  For MeshCore, pick MESHCORE.
+- **BOTH works on both.** The T-Deck stays tuned to MeshCore, whose
+  messages announce themselves for only 65 ms, and glances at Meshtastic
+  every 33 ms or so; a glance takes about 32 ms, well inside Meshtastic's
+  160 ms announcement. On the bench it caught 24 of 25 MeshCore and 25 of
+  25 Meshtastic messages with both on. (v1.37.0 took turns and caught only
+  about one MeshCore message in four.)
 - **Sending:** Settings > SYSTEM > **LORA TX** is OFF until you change it,
   then 10 dBm or 20 dBm (14 dBm at most in the EU band). In LORA CHATS, type
   on the keyboard and press Enter: the text goes out on the open tab's
