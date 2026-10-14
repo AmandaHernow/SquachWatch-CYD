@@ -508,6 +508,30 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
             label    = uuidName(0xFFFA);
         }
 
+        // Axon's body-cam tag, "BWCDEVICE": the strongest Axon signature there
+        // is, and independent of the address, which Axon randomises.
+        const uint8_t* raw = adv->getPayload().data();
+        const uint8_t rawLen = (uint8_t)adv->getPayload().size();
+        if (det.type == DetectionType::UNKNOWN && isAxonBwcPayload(raw, rawLen)) {
+            det.type = DetectionType::AXON;
+            label    = "Axon-BWC";
+        }
+        // Google's Find Hub trackers (Moto Tag, Chipolo Point, Pebblebee,
+        // eufy and the rest): FMDN's own frame types, which an Eddystone shop
+        // beacon on the same UUID never sends.
+        if (det.type == DetectionType::UNKNOWN && isFmdnPayload(raw, rawLen)) {
+            det.type = DetectionType::GOOGLE_TAG;
+            label    = "FindHub";
+        }
+        // A known UUID carried as service data rather than in the UUID list --
+        // how most trackers (Tile, the DULT standard) actually advertise.
+        if (det.type == DetectionType::UNKNOWN) {
+            if (const uint16_t u = serviceDataUuid(raw, rawLen)) {
+                det.type = lookupUuid(u);
+                label    = uuidName(u);
+            }
+        }
+
         // Service UUIDs
         if (det.type == DetectionType::UNKNOWN && adv->haveServiceUUID()) {
             for (int j = 0; j < adv->getServiceUUIDCount(); j++) {
@@ -517,18 +541,13 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
                 // NimBLE-Arduino versions). The equals() method is
                 // a stable API and compares the logical 16-bit value.
                 if (u.bitSize() == 16) {
-                    static const uint16_t kKnown16[] = {
-                        0x1101,  // SPP — skimmer
-                        0xFEED,  // Tile tracker
-                        0xFEEC,  // Tile tracker (second SIG-assigned UUID)
-                        0xFD5F,  // Ray-Ban Meta glasses
-                        0x3100, 0x3200, 0x3300, 0x3400, 0x3500,  // Raven
-                        0xFFFA,  // OpenDroneID
-                        0xFD5A,  // Samsung SmartTag
-                        0xFEAA,  // Google Find My Device Network (Eddystone)
-                        0x3081, 0x3082, 0x3083,  // Flipper Zero, one per case colour
-                    };
-                    for (uint16_t k : kKnown16) {
+                    // The signature table itself, not a hand-kept copy of it
+                    // (the copy had already drifted once). 0xFEAA is the one
+                    // exception: as a listed UUID it is any Eddystone beacon,
+                    // so Find Hub is matched on its frame type above instead.
+                    for (uint16_t i = 0; i < kUuidCount; i++) {
+                        const uint16_t k = kUuidTable[i].uuid;
+                        if (k == 0xFEAA) continue;
                         if (u.equals(NimBLEUUID((uint16_t)k))) {
                             det.type = lookupUuid(k);
                             label    = uuidName(k);
@@ -607,9 +626,13 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
         } else if (det.type == DetectionType::SAMSUNG_TAG) {
             det.vendor = "Samsung";
         } else if (det.type == DetectionType::GOOGLE_TAG) {
-            det.vendor = "Google";
+            // Find Hub, DULT or Chipolo: whichever row matched.
+            det.vendor = label ? label : "Google";
         } else if (det.type == DetectionType::TILE) {
             det.vendor = "Tile";
+        } else if (det.type == DetectionType::AXON) {
+            // The tag, a service UUID, the company ID, or a name.
+            det.vendor = label ? label : (strcasestr(det.name, "BodyWorn") ? "BodyWorn" : "Axon");
         } else if (det.type == DetectionType::IBEACON) {
             det.vendor = "iBeacon";
         } else if (det.type == DetectionType::HACKER) {

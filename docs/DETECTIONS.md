@@ -543,6 +543,60 @@ plenty of things that are not a Pineapple produce one.
 | maclookup.app (IEEE MA-L registry) | public data | Verkada / Avigilon / Axis / Ring OUIs |
 | netify.ai (IEEE MA-L registry) | public data | Ring OUI cross-check |
 | Bluetooth SIG assigned numbers registry | public | Tile service UUIDs |
+| OUI-SPY AXEOFF (colonelpanichacks) | MIT | Axon company ID `0x034D` and service UUIDs `0xFC81` / `0xFE6B` / `0xFE6C` |
+| all-cameras-are-beacons (soyboi1312) | Apache-2.0 | Axon `BWCDEVICE` tag, `FS-` Flock names, BodyWorn name, the false-positive work that retired the Espressif Flock rows |
+| AirGuard (seemoo-lab) | Apache-2.0 | Tracker service-data matching, DULT, Chipolo |
+| Google Fast Pair FMDN spec | public | Find Hub frame types `0x40` / `0x41` |
 
 We use signature *data* (OUIs, UUIDs, names) as facts; we don't
 copy GPL code into this project.
+
+---
+
+## 2026-10-14 additions and fixes
+
+Every value below was checked against the IEEE MA-L registry or the Bluetooth
+SIG's assigned numbers, except where a row says it comes from field captures.
+
+**Added**
+
+| Type | Signature | Value | Grade | Source |
+|---|---|---|---|---|
+| `AXON` | BLE company ID | `0x034D` (TASER International) | High | SIG; OUI-SPY AXEOFF |
+| `AXON` | BLE service UUIDs | `0xFC81`, `0xFE6B`, `0xFE6C` (Axon / TASER) | High | SIG; OUI-SPY AXEOFF |
+| `AXON` | Advert payload | ASCII `BWCDEVICE`, either byte order | High | Field captures, five owner-confirmed (all-cameras-are-beacons) |
+| `AXON` | BLE name | contains `BodyWorn` (Utility's body cam remote) | High | Field capture (nite-oui-collection) |
+| `AXON` | WiFi OUI | `00:1D:96` WatchGuard Video, `00:23:BD` Digital Ally | Medium | IEEE |
+| `RAVEN` | WiFi OUI | `D4:11:D6` ShotSpotter, Inc. | High | IEEE |
+| `FLOCK` | SSID prefix | `Flock Camera` (a camera's own hotspot, "Flock Camera net.") | High | Flock-You issue #43 |
+| `FLOCK` | BLE name | `FS-` and 4-12 hex digits | High | Field capture at Flock sites |
+| `META` | WiFi OUI | `98:59:49` Luxottica Group | Medium | IEEE |
+| `META` | BLE UUIDs / company ID | `0xFEB7`, `0xFEB8` (Meta), `0xFE45` (Snap), `0x060C` (Vuzix) | Medium | SIG |
+| `GOOGLE_TAG` | Find Hub | service data `0xFEAA` with frame `0x40` or `0x41` | Medium | Google FMDN spec |
+| `GOOGLE_TAG` | DULT | UUID `0xFCB2`, the cross-maker unwanted-tracker standard | Medium | SIG; AirGuard |
+| `GOOGLE_TAG` | Chipolo | UUIDs `0xFE33`, `0xFE65`; company ID `0x08C3` | Medium | SIG |
+| `TILE` | BLE UUID | `0xFD84` | High | SIG |
+| `CAMERA` | WiFi OUI | Blink: `3C:A0:70`, `70:AD:43`, `74:13:48`, `74:AB:93`, `C8:19:D8`, `F0:74:C1` (Medium); i-PRO `D4:2D:C5` (High) | | IEEE |
+| `DRONE` | WiFi OUI | DJI (10 blocks, Medium; 4 Baiwang blocks, Low), Skydio `38:1D:14` (High), Parrot (3 Medium, 2 Low) | | IEEE |
+
+Service UUIDs now also match when they arrive as **service data** (AD `0x16`),
+which is how most trackers advertise, not only in the UUID list.
+
+**Fixed**
+
+- The seventeen Espressif blocks filed as "Flock-ESP32" are gone. They named
+  every ESP32 a Flock camera, every SquachWatch included; field-tested projects
+  no longer trust them.
+- `0xFEAA` on its own was any Eddystone shop beacon. Google trackers are now
+  matched on Find Hub's own frame types instead.
+- Skimmer prefix `98:D3:00` (held by nobody) is now `98:D3:31`, Shenzhen
+  Bolutek, the HC-05 module's maker.
+- Company ID `0x058E` (Meta Platforms Technologies) is gone: it is what Quest
+  headsets send, and real Ray-Ban Meta glasses send `0x01AB` with `0xFD5F`.
+
+**Considered and left out:** Samsung `0xFD59` / `0xFD69` (Galaxy phones send
+them for their own offline finding), the circulating "Meta glasses" OUIs
+`7C:2A:9E` / `CC:66:0A` / `F4:03:43` / `5C:E9:1E` (Apple, HPE and nobody),
+WatchGuard Technologies' `00:01:21` / `00:90:7F` (a firewall maker), and
+Axon's `D8:1F:65`, which field captures support but the registry lists as
+"Private".
