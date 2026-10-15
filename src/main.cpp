@@ -8870,8 +8870,8 @@ void loop() {
                 }
             }
             break;
-#endif
         }
+#endif
 #endif
         case AppState::STATUS_LIGHT: {
             drawTwoBand([&](TFT_eSPI& t, bool) { uiLightTick(t, now, engine); });
