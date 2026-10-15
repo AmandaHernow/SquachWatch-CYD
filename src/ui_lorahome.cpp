@@ -170,13 +170,15 @@ void drawTiles(TFT_eSPI& t, const Numbers& n) {
 //
 // And three things to keep them alive on a quiet hill, from the Quiet Air
 // Lab (2026-10-15) and the owner's notes on the first go:
-//   PHOSPHOR  the noise is a solid line edge to edge, and a beam sweeps it
-//             from the left into an afterglow layer that fades, like an old
-//             green scope; the waterfall's cells hold heat that cools
-//             instead of snapping off. Real data, slow glass.
-//   SPARKLE   after a few quiet seconds the waterfall becomes a twinkling
-//             spectrum drifting leftward, with a few sparks behind the strip.
-//             Pure decoration, and gone the instant a packet lands.
+//   PHOSPHOR  the noise is a solid line edge to edge, and a meteor sweeps it
+//             from the left: a white-hot head, a tail fading into an
+//             afterglow layer, sparks thrown off behind it. The waterfall's
+//             cells hold heat that cools instead of snapping off. Real data,
+//             slow glass, a little showing off.
+//   SPARKLE   the waterfall is always a twinkling field in the owner's own
+//             theme colours, drifting leftward, with the packets' heat drawn
+//             over it; a few sparks behind the strip when it is quiet.
+//             Decoration, kept dim enough that a packet always wins.
 //   GHOST     the newest packet keeps echoing: its spike repeats fainter for
 //             two minutes, and its own bytes rain down the waterfall. Real.
 const uint32_t QUIET_MS = 8000, GHOST_MS = 120000;
@@ -248,18 +250,22 @@ void heatPrefill(uint32_t now) {
     s_colAt = now;
 }
 
-// A hue (0..359) at full saturation, as RGB565 at brightness a.
-uint16_t hue565(int hue, float a) {
-    hue %= 360; if (hue < 0) hue += 360;
-    const int sx = hue / 60, f = (hue % 60) * 255 / 60;
-    int r, g, b;
-    switch (sx) { case 0: r = 255; g = f; b = 0; break; case 1: r = 255 - f; g = 255; b = 0; break;
-                  case 2: r = 0; g = 255; b = f; break;      case 3: r = 0; g = 255 - f; b = 255; break;
-                  case 4: r = f; g = 0; b = 255; break;      default: r = 255; g = 0; b = 255 - f; break; }
-    if (a < 0) a = 0; if (a > 1) a = 1;
-    r = (int)(r * a); g = (int)(g * a); b = (int)(b * a);
-    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+// A ramp through the theme's own accent colours, so the field follows the
+// owner's palette (Settings > APPEARANCE): u 0..1 round the loop, at
+// brightness a.
+uint16_t themeRamp(float u, float a) {
+    const uint16_t stops[6] = { Theme::CYAN, Theme::VAPOR_BLUE, Theme::PURPLE, Theme::VAPOR_PURPLE, Theme::PINK, Theme::VAPOR_PINK };
+    u -= floorf(u);
+    const float x = u * 6.0f; const int i = (int)x; const float f = x - i;
+    const uint16_t c = Theme::blend(stops[i % 6], stops[(i + 1) % 6], (uint16_t)(f * 256));
+    return scale565(c, a);
 }
+// The meteor's sparks: thrown off the head, drifting back and down, fading.
+struct Spark { float x, y, vx, vy; int16_t life, full; };
+Spark    s_sparks[40];
+uint32_t s_sparkSeed = 0x5EED;
+float    sparkRand() { s_sparkSeed = s_sparkSeed * 1664525u + 1013904223u; return (s_sparkSeed >> 8) / 16777216.0f; }
+
 // A cheap, steady hash: the same cell twinkles the same way every pass.
 uint32_t mix32(uint32_t x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; }
 // How lit the sparkle field is: nothing while packets are arriving, then a
@@ -286,9 +292,9 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
             const float tw = sinf(now * (0.002f + (h % 7) * 0.0006f) + (h >> 16)) * 0.5f + 0.5f;
             const float a = tw * tw * tw * 0.45f * spk;
             if (a < 0.05f) continue;
-            const uint16_t c = hue565((int)((x - x0) * 360 / w + now / 40), a);
-            t.drawPixel(x, y, c);
-            if (a > 0.3f) { t.drawPixel(x - 1, y, hue565((int)((x - x0) * 360 / w + now / 40), a * 0.4f)); t.drawPixel(x + 1, y, hue565((int)((x - x0) * 360 / w + now / 40), a * 0.4f)); }
+            const float u = (float)(x - x0) / w + now / 9000.0f;
+            t.drawPixel(x, y, themeRamp(u, a));
+            if (a > 0.3f) { t.drawPixel(x - 1, y, themeRamp(u, a * 0.4f)); t.drawPixel(x + 1, y, themeRamp(u, a * 0.4f)); }
         }
     }
 
@@ -309,6 +315,7 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
         // boot has fewer than 80 samples, and they used to start partway in.
         auto gx = [&](uint16_t k) { return tn > 1 ? (int)((uint32_t)k * (GLOW_W - 1) / (tn - 1)) : GLOW_W - 1; };
         auto plot = [&](int x, int y, uint8_t v) { if (x >= 0 && x < GLOW_W && y >= 0 && y < GLOW_H && s_glow[y * GLOW_W + x] < v) s_glow[y * GLOW_W + x] = v; };
+        int headX = -1, headY = 0;
         if (tn > 1) {
             const uint16_t idx = (uint16_t)(((now % 1800) * (uint32_t)(tn - 1)) / 1800);
             uint16_t from = s_beamIdx <= idx ? s_beamIdx : 0;
@@ -320,16 +327,55 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
                 for (;;) { plot(xa, ya, 170); if (xa == xb && ya == yb) break; const int e2 = 2 * err; if (e2 >= dy) { err += dy; xa += sx; } if (e2 <= dx) { err += dx; ya += sy; } }
             }
             s_beamIdx = idx;
-            const int bx = gx(idx), by = gy(trail[idx]);
-            for (int dy = -1; dy <= 0; dy++) for (int dx = -1; dx <= 0; dx++) plot(bx + dx, by + dy, 255);
+            // The head, between this sample and the next, so it glides.
+            const float p = ((now % 1800) * (float)(tn - 1)) / 1800.0f, fr = p - idx;
+            const uint16_t nx = idx + 1 < tn ? idx + 1 : idx;
+            headX = (int)(gx(idx) + (gx(nx) - gx(idx)) * fr);
+            headY = (int)(gy(trail[idx]) + (gy(trail[nx]) - gy(trail[idx])) * fr);
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -2; dx <= 1; dx++) plot(headX + dx, headY + dy, (dx == 0 && dy == 0) ? 255 : 215);
+            // Sparks: one or two a frame, thrown back and out from the head.
+            int spawn = 1 + (int)(dt / 14);
+            for (Spark& sp : s_sparks) {
+                if (!spawn) break;
+                if (sp.life > 0) continue;
+                sp.x = (float)headX; sp.y = (float)headY;
+                sp.vx = -(0.015f + sparkRand() * 0.05f);
+                sp.vy = (sparkRand() - 0.5f) * 0.06f;
+                sp.full = sp.life = (int16_t)(350 + sparkRand() * 550);
+                spawn--;
+            }
         }
-        // The solid line: every sample joined, always there, dim phosphor.
+        // The solid line: every sample joined, always there, a dim accent.
+        const uint16_t lineCol = scale565(Theme::CYAN, 0.30f);
         for (uint16_t k = 0; k + 1 < tn; k++)
-            t.drawLine(x0 + gx(k), STRIP_Y + 1 + gy(trail[k]), x0 + gx(k + 1), STRIP_Y + 1 + gy(trail[k + 1]), 0x1A86);
-        // And the glow over it, bright where the beam has just been.
+            t.drawLine(x0 + gx(k), STRIP_Y + 1 + gy(trail[k]), x0 + gx(k + 1), STRIP_Y + 1 + gy(trail[k + 1]), lineCol);
+        // The tail: the afterglow, white-hot nearest the head, the theme's
+        // accent behind it, fading out.
+        const uint16_t hot = Theme::blend(Theme::CYAN, Theme::WHITE, 170);
         for (int y = 0; y < GLOW_H; y++) for (int x = 0; x < GLOW_W; x++) {
             const uint8_t v = s_glow[y * GLOW_W + x];
-            if (v > 6) t.drawPixel(x0 + x, STRIP_Y + 1 + y, Theme::blend(0x0000, v > 230 ? 0xDFFC : 0x7FF9, v));
+            if (v <= 8) continue;
+            const uint16_t c = v > 200 ? Theme::blend(Theme::CYAN, hot, (uint16_t)((v - 200) * 4.6f))
+                                       : scale565(Theme::CYAN, v / 200.0f);
+            t.drawPixel(x0 + x, STRIP_Y + 1 + y, c);
+        }
+        // The sparks, falling back off the head and cooling from white
+        // through the accent to nothing.
+        for (Spark& sp : s_sparks) {
+            if (sp.life <= 0) continue;
+            sp.life -= (int16_t)dt;
+            sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.vy += 0.00012f * dt;
+            if (sp.life <= 0 || sp.x < 0 || sp.x >= GLOW_W || sp.y < 0 || sp.y >= GLOW_H) { sp.life = 0; continue; }
+            const float lf = (float)sp.life / sp.full;
+            const uint16_t c = lf > 0.7f ? Theme::blend(Theme::CYAN, Theme::WHITE, (uint16_t)((lf - 0.7f) * 850))
+                                         : themeRamp(0.35f * (1 - lf), lf * 1.3f);
+            t.drawPixel(x0 + (int)sp.x, STRIP_Y + 1 + (int)sp.y, c);
+            if (lf > 0.75f) t.drawPixel(x0 + (int)sp.x + 1, STRIP_Y + 1 + (int)sp.y, scale565(Theme::CYAN, lf * 0.5f));
+        }
+        // And the head itself, on top: a small halo and a white core.
+        if (headX >= 0) {
+            t.fillCircle(x0 + headX, STRIP_Y + 1 + headY, 3, scale565(Theme::CYAN, 0.35f));
+            t.fillRect(x0 + headX - 1, STRIP_Y + headY, 2, 2, Theme::WHITE);
         }
     }
 
@@ -395,19 +441,20 @@ void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
     const float coolN = expf(-(float)dt / 3000.0f), coolP = expf(-(float)dt / 12000.0f);
     for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) s_heat[c][r] *= s_kind[c][r] ? coolP : coolN;
 
-    // SPARKLE, behind the heat: a twinkling spectrum, drifting leftward at
-    // the waterfall's own pace, hue sweeping across it. Each cell twinkles on
-    // its own steady rhythm; about one in four is lit at any moment.
-    const float spk = sparkleLevel(quiet);
-    if (spk > 0) {
+    // SPARKLE, behind the heat, all the time (asked for 2026-10-15): a
+    // twinkling field in the theme's own colours, drifting leftward at the
+    // waterfall's pace. Each cell twinkles on its own steady rhythm; about
+    // one in four is lit at any moment. A little brighter when it is quiet.
+    const float spk = 0.6f + 0.4f * sparkleLevel(quiet);
+    {
         const uint32_t shift = now / 400;                // a column every 0.4 s
         for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) {
             const uint32_t h = mix32((uint32_t)(c + shift) * 73856093u ^ (uint32_t)r * 19349663u);
             if ((h & 3) != 0) continue;
             const float tw = sinf(now * (0.0015f + (h >> 4 & 7) * 0.0005f) + (float)(h >> 8 & 255) * 0.0246f) * 0.5f + 0.5f;
             const float a = (0.12f + 0.88f * tw * tw * tw) * spk * 0.85f;
-            const int hue = c * 360 / WF_COLS + r * 12 + (int)(now / 50);
-            t.fillRect(x0 + c * WF_CW, WF_Y + r * WF_CH, WF_CW - 1, WF_CH, hue565(hue, a));
+            const float u = (float)c / WF_COLS + r * 0.035f + now / 9000.0f;
+            t.fillRect(x0 + c * WF_CW, WF_Y + r * WF_CH, WF_CW - 1, WF_CH, themeRamp(u, a));
         }
     }
 
