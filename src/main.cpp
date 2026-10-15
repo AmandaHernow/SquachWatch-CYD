@@ -5930,6 +5930,7 @@ void loop() {
                 static char line[40];
                 snprintf(line, sizeof line, "%s says: %s!", hu.from, what);
                 if (state == AppState::CLEAR) Squachy::announce(line);
+                Sound::play(Sound::Id::HEADS_UP);
 #if defined(TWATCH_S3)
                 twatchBuzz(Buzz::MESSAGE);
 #endif
