@@ -137,6 +137,16 @@ lora_survey_test_SRCS        := $(SRC)/lora_survey.cpp
 # and the fixed fields a long line must not run past.
 lora_msgs_test_SRCS          := $(SRC)/lora_msgs.cpp
 
+# SquachEmit's shot lists against the tables here, when that repository sits
+# beside this one (I:\GitHub\SquachWatch-CYD\SquachEmit on the bench). CI
+# checks out only this repository, so there the test simply is not built.
+EMIT := ../../SquachEmit
+ifneq ($(wildcard $(EMIT)/src/emit_shots.cpp),)
+TESTS += emitter_sync_test
+emitter_sync_test_SRCS       := $(SRC)/signatures.cpp $(EMIT)/src/emit_shots.cpp $(EMIT)/src/emit_data.cpp
+emitter_sync_test_FLAGS      := -I$(EMIT)/include
+endif
+
 .PHONY: all clean
 all: $(addprefix run-,$(TESTS))
 
