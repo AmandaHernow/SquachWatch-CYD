@@ -352,8 +352,18 @@ void drawDish(TFT_eSPI& t, uint32_t now) {
     t.fillCircle(cx, cy, 2, Theme::WHITE);
     small(t, cx - 3, cy - R - 9, "N", dim(Theme::WHITE, 110));
     small(t, cx - R + 2, cy + R - 8, "10mi", dim(Theme::WHITE, 110), 0x0041);
-    // Under the dish: the nearest, and the legend.
-    small(t, 4, cy + R + 3, "NEAREST", dim(Theme::WHITE, 110));
+    // Under the dish, three lines. The GPS's own state first, in words: the
+    // legend used to end "NO POS", which meant "a rim dot sent no position"
+    // and read as "your GPS has no position" (a tester, 2026-10-15).
+    {
+        char g[24];
+        uint16_t gc;
+        if (haveFix)                 { snprintf(g, sizeof g, "GPS FIX %u SATS", (unsigned)fix.used); gc = Theme::GREEN; }
+        else if (Gnss::good() > 0)   { snprintf(g, sizeof g, "GPS SEARCHING"); gc = Theme::AMBER; }
+        else                         { snprintf(g, sizeof g, "GPS NOT HEARD"); gc = dim(Theme::WHITE, 150); }
+        smallClip(t, 4, cy + R + 3, g, gc, 100);
+    }
+    // Then the nearest node that has said where it is, or why there is none.
     if (nb && blips[order[0]].known) {
         const Blip& b = blips[order[0]];
         char pv[24], line[28];
@@ -362,13 +372,16 @@ void drawDish(TFT_eSPI& t, uint32_t now) {
         else              snprintf(line, sizeof line, "%s %umi %s", nm, (unsigned)b.miles, compass(b.bearing));
         smallClip(t, 4, cy + R + 12, line, netCol(b.proto), 100);
     } else if (nb) {
-        smallClip(t, 4, cy + R + 12, haveFix ? "NO POSITIONS YET" : "NO GPS FIX", dim(Theme::WHITE, 150), 100);
+        // Heard, but none has sent a position yet (Meshtastic's default is one
+        // every 15-30 min, and many owners turn it off), or no fix to place them.
+        smallClip(t, 4, cy + R + 12, haveFix ? "NO NODE POS YET" : "NEEDS A GPS FIX", dim(Theme::WHITE, 150), 100);
     } else {
         small(t, 4, cy + R + 12, "NOBODY HEARD YET", dim(Theme::WHITE, 150));
     }
-    t.fillCircle(7, cy + R + 25, 1, Theme::WHITE);   small(t, 11, cy + R + 21, "1", dim(Theme::WHITE, 150));
-    t.drawCircle(25, cy + R + 25, 2, Theme::WHITE);  small(t, 30, cy + R + 21, "2+", dim(Theme::WHITE, 150));
-    t.drawPixel(52, cy + R + 25, 0x6B4D);            small(t, 56, cy + R + 21, "NO POS", dim(Theme::WHITE, 150));
+    // And the key: filled heard direct, hollow through relays. A rim dot is a
+    // node with no position; the line above says when that is all of them.
+    t.fillCircle(7, cy + R + 25, 1, Theme::WHITE);   small(t, 11, cy + R + 21, "DIRECT", dim(Theme::WHITE, 150));
+    t.drawCircle(56, cy + R + 25, 2, Theme::WHITE);  small(t, 61, cy + R + 21, "RELAY", dim(Theme::WHITE, 150));
 }
 
 // ---- the chats -------------------------------------------------------------------
