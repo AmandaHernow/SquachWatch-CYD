@@ -206,6 +206,8 @@ struct HardwareSerial {
     size_t   pos = 0;
     uint32_t t0 = 0;
     bool     loaded = false;
+    // The baud is a fiction here: the NMEA file plays at its own pace.
+    void updateBaudRate(unsigned long) {}
     void begin(unsigned long baud, uint32_t config = 0, int8_t rx = -1, int8_t tx = -1) {
         t0 = millis();
         pos = 0;
