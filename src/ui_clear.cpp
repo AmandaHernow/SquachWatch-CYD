@@ -3362,16 +3362,16 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     // WATCHING / HUNTING pill is up -- that lives in the same middle of the
     // bar, so they drop under it, and Squachy gives up those rows while it
     // is set -- and never on the T-Watch, whose clock and badges are there.
-    // The T-Deck's LORA n NEW pill lives in that middle too: while it is up
-    // (unread chats, radio on) the tiles drop under it, and come back up once
-    // the chats are read (asked for 2026-10-13).
+    // The T-Deck's LORA pill lives in that middle too, whenever the radio is
+    // on, so the tiles sit under it then (asked for 2026-10-13, always-on
+    // 2026-10-15).
 #if defined(TWATCH_S3)
     const bool tilesLow = true;
 #else
     const bool tilesLow = eng.watchKind() != DetectionEngine::WatchKind::NONE ||
                           eng.huntKind()  != DetectionEngine::WatchKind::NONE
 #if SQUACH_LORA && defined(TDECK_PLUS)
-                          || (uiLoraChatUnread() != 0 && Settings::loraListen() != 0)
+                          || Settings::loraListen() != 0   // the LORA pill is up whenever the radio is on (2026-10-15)
 #endif
                           ;
 #endif

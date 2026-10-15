@@ -54,6 +54,14 @@ bool               s_present = false;
 LoraRadio::BringUp s_up;
 TaskHandle_t       s_task = nullptr;
 SemaphoreHandle_t  s_lock = nullptr;
+// The LORA page's two rings (include/lora_sniffer.h). The trail is int8 so
+// a torn read on the other core is a wrong dBm for one pixel, never a crash;
+// the hits are copied out under the sniffer's lock.
+int8_t   s_trail[TRAIL_CAP];
+uint16_t s_trailHead = 0, s_trailN = 0;
+Hit      s_hits[HIT_CAP];
+uint8_t  s_hitHead = 0, s_hitN = 0;
+
 
 // What loop() asks of the task. Read at every step of the task's loop;
 // written from loop() only, so plain volatile is enough.
@@ -180,6 +188,9 @@ void push(Packet& pk) {
     s_stats.airtimeMs += pk.toaUs / 1000;
     if (pk.profile < 64) s_stats.byProfile[pk.profile]++;
     s_stats.byProto[(int)pk.proto]++;
+    s_hits[s_hitHead] = Hit{ pk.ms, pk.rssi, pk.proto };
+    s_hitHead = (uint8_t)((s_hitHead + 1) % HIT_CAP);
+    if (s_hitN < HIT_CAP) s_hitN++;
     Nodes::note(pk, pk.ms, pk.epoch);
     xSemaphoreGive(s_lock);
 }
@@ -218,6 +229,9 @@ uint8_t nextSurveyProfile(uint8_t from) {
 
 void noiseSample() {
     const int16_t r = LoraRadio::rssiNow();
+    s_trail[s_trailHead] = (int8_t)(r < -127 ? -127 : r > 0 ? 0 : r);
+    s_trailHead = (uint16_t)((s_trailHead + 1) % TRAIL_CAP);
+    if (s_trailN < TRAIL_CAP) s_trailN++;
     // A slow floor: drop at once, rise slowly.
     if (r < s_stats.noiseDbm || s_stats.noiseDbm == 0) s_stats.noiseDbm = r;
     else if (r > s_stats.noiseDbm + 1) s_stats.noiseDbm++;
@@ -798,6 +812,20 @@ void applyListen(uint8_t listen) {
             break;
     }
     Serial.printf("[lora] listening: %s\n", listen == 0 ? "off" : listen == 1 ? "Meshtastic" : listen == 2 ? "MeshCore" : "Meshtastic and MeshCore in turn");
+}
+
+uint16_t rssiTrail(int8_t* out, uint16_t cap) {
+    const uint16_t n = s_trailN < cap ? s_trailN : cap;
+    for (uint16_t i = 0; i < n; i++) out[i] = s_trail[(s_trailHead + TRAIL_CAP - n + i) % TRAIL_CAP];
+    return n;
+}
+
+uint8_t hitTrail(Hit* out, uint8_t cap) {
+    if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(10)) != pdTRUE) return 0;
+    const uint8_t n = s_hitN < cap ? s_hitN : cap;
+    for (uint8_t i = 0; i < n; i++) out[i] = s_hits[(s_hitHead + HIT_CAP - n + i) % HIT_CAP];
+    xSemaphoreGive(s_lock);
+    return n;
 }
 
 uint8_t spectrum(uint8_t* live, uint8_t* hold, uint8_t cap) {

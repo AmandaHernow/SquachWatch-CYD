@@ -372,6 +372,7 @@ static void drawCrashCard(TFT_eSPI& t) {
 #include "ui_light.h"
 #if SQUACH_LORA
 #include "ui_lorachat.h"
+#include "ui_lorahome.h"
 #endif
 
 // Two CYD board variants are supported from this one firmware:
@@ -1589,6 +1590,10 @@ static void tdeckBacklight(uint8_t duty) {
 // one key, and the loop comes round faster than fingers do. The key goes to
 // whichever text screen is up; anywhere else it is dropped.
 static const uint8_t TDECK_KBD = 0x55;
+#if SQUACH_LORA
+static void enterLoraChat();
+static void enterLoraHome();
+#endif
 static void tdeckKeysTick(uint32_t now) {
     static uint32_t at = 0;
     if (now - at < 25) return;
@@ -1605,6 +1610,10 @@ static void tdeckKeysTick(uint32_t now) {
 #endif
 #if SQUACH_LORA
     else if (state == AppState::LORA_CHAT) uiLoraChatKey(c, now);
+    else if (state == AppState::LORA_HOME) uiLoraHomeKey(c, now);
+    // Enter on the home screen opens the LORA page, when the radio is on: the
+    // keyboard is the reason to own a T-Deck (asked for 2026-10-15).
+    else if (state == AppState::CLEAR && c == '\n' && Settings::loraListen() != 0) enterLoraHome();
 #endif
 }
 #endif
@@ -2899,6 +2908,15 @@ static void enterLoraChat() {
     state = AppState::LORA_CHAT;
     transitionStart = millis();
     uiLoraChatInit(*canvas);
+}
+static void enterLoraHome() {
+#if defined(TDECK_PLUS)
+    state = AppState::LORA_HOME;
+    transitionStart = millis();
+    uiLoraHomeInit(*canvas);
+#else
+    enterLoraChat();   // the watches have no room for the landing page
+#endif
 }
 #endif
 
@@ -5070,9 +5088,18 @@ static int16_t s_loraBadgeX = -1, s_loraBadgeY = 0, s_loraBadgeW = 0, s_loraBadg
 void twatchLoraBadge(TFT_eSPI& t) {
     s_loraBadgeX = -1;
     const uint16_t u = uiLoraChatUnread();
-    if (!u || Settings::loraListen() == 0) return;
+    if (Settings::loraListen() == 0) return;
+#if defined(TDECK_PLUS)
+    // Up whenever the radio is on, not only with something unread: with
+    // nothing new the chats were three taps away through Settings, and the
+    // keyboard is right there (asked for 2026-10-15). The watch keeps the
+    // pill for unread only; its bar is already full.
+#else
+    if (!u) return;
+#endif
     char txt[20];
-    snprintf(txt, sizeof txt, "LORA %u NEW", (unsigned)u);
+    if (u) snprintf(txt, sizeof txt, "LORA %u NEW", (unsigned)u);
+    else   snprintf(txt, sizeof txt, "LORA");
     t.setTextSize(Theme::uiTextSize(t, 1));
     const int w = t.textWidth(txt) + 10, h = t.fontHeight() + 6;
     const int x = (t.width() - w) / 2;
@@ -5100,7 +5127,7 @@ static void tdeckLoraSoundTick(uint32_t now) {
     if (now - lastCheck < 1000) return;
     lastCheck = now;
     const uint16_t u = uiLoraChatUnread();
-    if (u > lastUnread && state != AppState::LORA_CHAT && (!lastDing || now - lastDing > 30000)) {
+    if (u > lastUnread && state != AppState::LORA_CHAT && state != AppState::LORA_HOME && (!lastDing || now - lastDing > 30000)) {
         lastDing = now;
         Sound::play(Sound::Id::MESSAGE);
     }
@@ -5351,13 +5378,28 @@ static void wardriveBegin() {
 static bool     s_cydGpsClockSet = false;   // set from GPS once this boot
 static uint32_t s_cydGpsFirstFixMs = 0;     // millis() of the first real fix, 0 until then
 
+// The module's baud is a guess until a sentence arrives. The CYD's ATGM336H
+// talks at 9600; the T-Deck Plus's u-blox MIA-M10Q at 38400 out of the box,
+// which is why its GPS sat silent for a two-hour walk on 2026-10-15 (0
+// sentences, not 0 fixes). So: the board's default first, and if nothing
+// parses in twenty seconds, the other one, back and forth until one does.
+static uint32_t s_cydGpsBaud = CYD_GPS_BAUD;
+static uint32_t s_cydGpsBaudAt = 0;
 static void cydGpsStart() {
     Gnss::reset();
     // TX -1: the module's RX is not wired. The core fills in its default
     // pins only when both are negative, so TX stays unassigned here; the
     // default TX2 is GPIO17, the status light.
-    CYD_GPS_SERIAL.begin(CYD_GPS_BAUD, SERIAL_8N1, CYD_GPS_RX, -1);
+    CYD_GPS_SERIAL.begin(s_cydGpsBaud, SERIAL_8N1, CYD_GPS_RX, -1);
+    s_cydGpsBaudAt = millis();
     Wardrive::sdBegin();
+}
+static void cydGpsBaudTick(uint32_t now) {
+    if (Gnss::good() + Gnss::bad() || now - s_cydGpsBaudAt < 20000) return;
+    s_cydGpsBaud = (s_cydGpsBaud == 9600) ? 38400 : 9600;
+    s_cydGpsBaudAt = now;
+    CYD_GPS_SERIAL.updateBaudRate(s_cydGpsBaud);
+    Serial.printf("[gps] nothing heard: trying %lu baud\n", (unsigned long)s_cydGpsBaud);
 }
 
 static const char* cydWardriveStateName(Wardrive::SdState st) {
@@ -5421,6 +5463,7 @@ static void cydGpsTick(uint32_t now) {
     if (Gnss::faked()) Gnss::fake(Gnss::fix().lat7, Gnss::fix().lon7, Clock::isSet() ? Clock::nowEpoch() : 0, now);
 
     while (CYD_GPS_SERIAL.available()) Gnss::feed((char)CYD_GPS_SERIAL.read(), now);
+    cydGpsBaudTick(now);
     Wardrive::sdTick(now, engine.sd().ready());
 
     const Gnss::Fix& f = Gnss::fix();
@@ -6809,10 +6852,10 @@ void loop() {
 #if SQUACH_LORA && (defined(TWATCH_S3) || defined(TDECK_PLUS))
             } else if (touchJustDown && (now - lastTouch) > TOUCH_DEBOUNCE_MS &&
                        twatchLoraBadgeHit(tp.x, tp.y)) {
-                // The LORA pill: straight to the chats.
+                // The LORA pill: the landing page on the T-Deck, the chats on a watch.
                 lastTouch = now;
                 sqActive  = false;
-                enterLoraChat();
+                enterLoraHome();
 #endif
             } else if (touchJustDown && (now - lastTouch) > TOUCH_DEBOUNCE_MS &&
                        uiClearWatchPillHit(tp.x, tp.y)) {
@@ -8787,9 +8830,15 @@ void loop() {
                 if (!gestureMoved && now - gestureDownMs <= TAP_MAX_MS) {
                     lastTouch = now;
                     if (Theme::pinnedBackHit(gestureStartX, gestureStartY, tft.width(), tft.height())) {
-                        // Straight home, not back to the settings page the chats
-                        // were opened from (asked for 2026-10-13, on the T-Deck).
+                        // Not back to the settings page the chats were opened
+                        // from (asked for 2026-10-13): the LORA page on the
+                        // T-Deck, which is where the chats open from now; home
+                        // on a watch.
+#if defined(TDECK_PLUS)
+                        enterLoraHome();
+#else
                         enterClear();
+#endif
                         break;
                     }
                     const LoraChatHit hit = uiLoraChatHit(*canvas, gestureStartX, gestureStartY);
@@ -8798,6 +8847,30 @@ void loop() {
                 }
             }
             break;
+        }
+#if defined(TDECK_PLUS)
+        case AppState::LORA_HOME: {
+            drawTwoBand([&](TFT_eSPI& t, bool) { uiLoraHomeTick(t, now); });
+            static bool gestureActive = false;
+            static int  gestureStartX = 0, gestureStartY = 0;
+            static uint32_t gestureDownMs = 0;
+            if (touchJustDown) { gestureActive = true; gestureStartX = tp.x; gestureStartY = tp.y; gestureDownMs = now; }
+            if (touchJustUp && gestureActive) {
+                gestureActive = false;
+                if (now - gestureDownMs <= TAP_MAX_MS) {
+                    lastTouch = now;
+                    switch (uiLoraHomeHit(*canvas, gestureStartX, gestureStartY)) {
+                        case LoraHomeHit::BACK:            enterClear(); break;
+                        case LoraHomeHit::CHATS:           uiLoraChatSelect(uiLoraHomeNet()); enterLoraChat(); break;
+                        case LoraHomeHit::CHAT_MESHTASTIC: uiLoraChatSelect(0); enterLoraChat(); break;
+                        case LoraHomeHit::CHAT_MESHCORE:   uiLoraChatSelect(1); enterLoraChat(); break;
+                        case LoraHomeHit::SWITCH:          uiLoraHomeToggleNet(); break;
+                        default: break;
+                    }
+                }
+            }
+            break;
+#endif
         }
 #endif
         case AppState::STATUS_LIGHT: {

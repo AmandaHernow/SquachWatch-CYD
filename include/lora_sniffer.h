@@ -40,6 +40,13 @@ struct Stats {
 // second macro rather than -DSQUACH_LORA in sim/Makefile because SQUACH_LORA
 // also switches on the network halves of lora_feed.cpp and lora_enrich.cpp,
 // which want WiFi.h and HTTPClient.h, and sim/ has no WiFi shim.
+// The last 80 seconds, for the LORA page's strip and waterfall: the noise
+// floor sampled once a second (newest last), and every packet's loudness,
+// when it landed and whose it was. Both are rings the radio task writes.
+static const uint16_t TRAIL_CAP = 80;
+static const uint8_t  HIT_CAP   = 24;
+struct Hit { uint32_t ms; int16_t rssi; Proto proto; };
+
 #if SQUACH_LORA || SQUACH_LORA_FAKE
 // After the WiFi and Bluetooth radios are up. True when a module answered.
 bool begin();
@@ -96,6 +103,8 @@ bool     packetAt(uint16_t idxFromNewest, Packet& out);
 // that left the bytes behind would send the caller back for them one at a time.
 uint16_t packetSnapshot(Packet* out, uint16_t cap, uint16_t from = 0);
 const Stats& stats();
+uint16_t rssiTrail(int8_t* out, uint16_t cap);   // oldest first, newest last
+uint8_t  hitTrail(Hit* out, uint8_t cap);
 
 // The node table, copied out under the sniffer's lock: how many, the order
 // newest first, and one row.
@@ -251,6 +260,8 @@ inline uint8_t channelsQuietBuiltIn() { return 0; }
 inline void channelCapacity(uint8_t& a, uint8_t& b, uint8_t& c, uint8_t& d) { a = b = c = d = 0; }
 static const uint8_t SPECTRUM_BINS = 141;
 inline uint8_t spectrum(uint8_t*, uint8_t*, uint8_t) { return 0; }
+inline uint16_t rssiTrail(int8_t*, uint16_t) { return 0; }
+inline uint8_t  hitTrail(Hit*, uint8_t) { return 0; }
 inline uint32_t spectrumSweeps() { return 0; }
 inline int8_t surveyStart(const char*) { return -1; }
 inline bool surveyStop() { return false; }
