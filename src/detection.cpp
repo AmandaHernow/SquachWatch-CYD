@@ -883,14 +883,18 @@ bool DetectionEngine::init() {
             } else {
                 g_engine->postWiFi(frame + 16, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel, ssid, enc);
             }
-        } else if (type == 0 && subtype == 12) {
-            // Deauthentication: addr2 (transmitter -- the attacker, or
-            // a spoofed AP address) at the same offset probe requests
-            // use above. A single frame here is completely normal
-            // WiFi traffic (a phone disconnecting, an AP restarting);
+        } else if (type == 0 && (subtype == 12 || subtype == 10)) {
+            // Deauthentication, and disassociation, which the same tools
+            // send: addr2 (transmitter -- the attacker, or a spoofed AP
+            // address) at the same offset probe requests use above, and
+            // whether addr1 is the broadcast address, which is what a
+            // flood is usually aimed at. A single frame here is completely
+            // normal WiFi traffic (a phone disconnecting, an AP restarting);
             // postDeauth()/processDeauthQ() is what actually decides
             // whether a BURST of them is happening.
-            g_engine->postDeauth(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel);
+            bool bcast = true;
+            for (int i = 4; i < 10; i++) if (frame[i] != 0xFF) { bcast = false; break; }
+            g_engine->postDeauth(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel, bcast);
         }
     });
 
@@ -1657,7 +1661,7 @@ void IRAM_ATTR DetectionEngine::postWiFi(const uint8_t* mac, int8_t rssi, uint8_
     _wifiQHead = next;
 }
 
-void IRAM_ATTR DetectionEngine::postDeauth(const uint8_t* mac, int8_t rssi, uint8_t channel) {
+void IRAM_ATTR DetectionEngine::postDeauth(const uint8_t* mac, int8_t rssi, uint8_t channel, bool bcast) {
     if (!mac) return;
     uint8_t next = (_deauthQHead + 1) % DEAUTH_Q_CAP;
     if (next == _deauthQTail) return;           // queue full, drop
@@ -1665,6 +1669,7 @@ void IRAM_ATTR DetectionEngine::postDeauth(const uint8_t* mac, int8_t rssi, uint
     memcpy((void*)e.mac, mac, 6);
     e.rssi    = rssi;
     e.channel = channel;
+    e.bcast   = bcast;
     _deauthQHead = next;
 }
 
@@ -1679,20 +1684,33 @@ void DetectionEngine::processDeauthQ() {
         }
 
         uint32_t now = millis();
-        // Rolling window: resets after a gap longer than the window
-        // itself rather than a fixed calendar-aligned interval, so an
-        // isolated frame (normal traffic) never counts toward a burst
-        // that happened long before or after it.
-        if (now - _deauthWinStart > DEAUTH_WINDOW_MS) {
-            _deauthWinStart = now;
-            _deauthWinCount = 0;
+        // This sender's rolling window: resets after a gap longer than the
+        // window itself, so an isolated frame (normal traffic) never counts
+        // toward a burst that happened long before or after it. A sender
+        // not seen before takes the slot whose window is oldest.
+        DeauthSender* s = nullptr;
+        for (uint8_t i = 0; i < DEAUTH_SENDERS; i++)
+            if (memcmp(_deauthSenders[i].mac, e.mac, 6) == 0) { s = &_deauthSenders[i]; break; }
+        if (!s) {
+            s = &_deauthSenders[0];
+            for (uint8_t i = 1; i < DEAUTH_SENDERS; i++)
+                if (_deauthSenders[i].winStart < s->winStart) s = &_deauthSenders[i];
+            memcpy(s->mac, e.mac, 6);
+            s->winStart = now; s->count = 0; s->bcastCount = 0;
         }
-        _deauthWinCount++;
+        if (now - s->winStart > DEAUTH_WINDOW_MS) {
+            s->winStart = now;
+            s->count = 0; s->bcastCount = 0;
+        }
+        if (s->count < 255) s->count++;
+        if (e.bcast && s->bcastCount < 255) s->bcastCount++;
+        const uint8_t burst = s->count;
 
         // Window/cooldown bookkeeping above still runs even while
         // disabled, so re-enabling doesn't instantly fire off a stale
         // accumulated count -- only the actual recording is gated.
-        if (_deauthWinCount >= DEAUTH_THRESHOLD && (now - _deauthLastFireMs) > DEAUTH_COOLDOWN_MS &&
+        if ((s->count >= DEAUTH_THRESHOLD || s->bcastCount >= DEAUTH_BCAST) &&
+            (now - _deauthLastFireMs) > DEAUTH_COOLDOWN_MS &&
             Settings::typeEnabled(DetectionType::DEAUTH)) {
             _deauthLastFireMs = now;
             Detection d;
@@ -1709,7 +1727,7 @@ void DetectionEngine::processDeauthQ() {
             // type uses it for -- there's no single persistent device
             // identity behind a flood the way there is for a tracker
             // or camera.
-            d.hits   = _deauthWinCount;
+            d.hits   = burst;
             d.active = true;
             // A second flood from the same source is the same attacker, so
             // it lands on the row the first one made -- it used to push a
@@ -1723,7 +1741,7 @@ void DetectionEngine::processDeauthQ() {
                 row.prevRssi  = row.rssi;
                 row.rssi      = e.rssi;
                 row.channel   = e.channel;
-                row.hits      = _deauthWinCount;
+                row.hits      = burst;
                 row.lastSeen  = now;
                 row.firstSeen = now;
                 row.restored  = 0;
