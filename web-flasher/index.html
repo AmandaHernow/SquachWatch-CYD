@@ -724,6 +724,16 @@
       <input class="board-code" id="boardCode" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. ESP32-2432S032C">
       <div class="board-code-answer" id="boardCodeAnswer" aria-live="polite"></div>
     </div>
+    <!-- The version picker, up here on purpose (asked for 2026-10-15): it was
+         folded under Advanced and people thought the older builds were gone. -->
+    <div class="version-row" id="versionRow" hidden>
+      <label class="board-picker-label" for="versionSelect">Firmware version:</label>
+      <select class="board-select" id="versionSelect" aria-label="Firmware version">
+      </select>
+      <p class="version-hint">
+        On the latest build and stuck in a boot loop? Flash the one before it.
+      </p>
+    </div>
     <ul class="board-help">
       <li><strong>Cheap Yellow Displays</strong> have a code like <strong>ESP32-2432S028R</strong> on the back. The last letter is the touch: <strong>R</strong> resistive (press), <strong>C</strong> capacitive (tap).</li>
       <li><strong>Freenove</strong> boards say <strong>FNK0103</strong> or <strong>FNK0104</strong>.</li>
@@ -793,15 +803,7 @@
     </ol>
     <p class="browser-note">Works in Firefox / Chrome / Edge / Brave on desktop. No app to install — just the browser.</p>
       <details class="advanced">
-        <summary>Advanced: older versions, overclock</summary>
-    <div class="version-row" id="versionRow" hidden>
-      <label class="board-picker-label" for="versionSelect">Firmware version:</label>
-      <select class="board-select" id="versionSelect" aria-label="Firmware version">
-      </select>
-      <p class="version-hint">
-        On the latest build and stuck in a boot loop? Flash the one before it.
-      </p>
-    </div>
+        <summary>Advanced: overclock</summary>
     <label class="overclock-row" id="overclockRow">
       <input type="checkbox" id="overclockChk">
       <span>
