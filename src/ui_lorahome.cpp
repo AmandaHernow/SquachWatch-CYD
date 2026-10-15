@@ -19,6 +19,7 @@
 #include <Arduino.h>
 #include <math.h>
 #include <string.h>
+#include <esp_heap_caps.h>
 
 namespace {
 
@@ -165,34 +166,171 @@ void drawTiles(TFT_eSPI& t, const Numbers& n) {
 // ---- the strip and the waterfall ------------------------------------------------
 // Both read the same two rings: the noise samples (one a second, 80 of them)
 // and the packet hits (when, how loud, which network). The strip is the
-// noise as a line with the hits as spikes; the waterfall is the same 80
-// seconds as colour, each column a second and a half, each row ten dB.
+// noise and the hits as spikes; the waterfall is the same seconds as colour.
+//
+// And four things to keep them alive on a quiet hill, picked from the Quiet
+// Air Lab (2026-10-15):
+//   PHOSPHOR  the noise is traced by a beam into an afterglow layer that
+//             fades, like an old green scope, and the waterfall's cells hold
+//             heat that cools instead of snapping off. Real data, slow glass.
+//   AURORA    after half a minute with no packet, a dim drift through the
+//             waterfall and a glow breathing along the strip's floor. Pure
+//             decoration, and gone the instant a packet lands.
+//   GHOST     the newest packet keeps echoing: its spike repeats fainter for
+//             two minutes, and its own bytes rain down the waterfall. Real.
+//   SQUACHY   walks the strip's floor, hops and points at a new packet, sits
+//             down when it has been quiet a while. Decoration.
+const uint32_t QUIET_MS = 30000, SIT_MS = 40000, GHOST_MS = 120000;
+const int GLOW_W = 208, GLOW_H = 44;              // inside the strip's border
+const int WF_COLS = 52, WF_ROWS = 10, WF_CW = 4, WF_CH = 2;
+const uint32_t WF_COL_MS = 1540;                  // 52 columns, 80 seconds
+
+uint8_t* s_glow = nullptr;                        // PHOSPHOR afterglow, PSRAM
+float    s_heat[WF_COLS][WF_ROWS];                // waterfall heat, 0..~1.5
+uint8_t  s_kind[WF_COLS][WF_ROWS];                // 0 noise, 1 Meshtastic, 2 MeshCore, 3 other
+uint32_t s_lastFrame = 0, s_colAt = 0, s_hitSeen = 0, s_openedAt = 0;
+uint16_t s_beamIdx = 0;
+float    s_sqX = 40, s_sqDir = 1;                 // SQUACHY
+uint32_t s_sqHopAt = 0, s_sqHopSeen = 0;
+Lora::Proto s_sqHopProto = Lora::Proto::UNKNOWN;
+
 int yForDbm(int16_t dbm, int top, int h) {
     // -120 at the bottom, -40 at the top.
     int v = 120 + dbm; if (v < 0) v = 0; if (v > 80) v = 80;
     return top + h - 3 - (v * (h - 6)) / 80;
 }
+int wfRow(int16_t dbm) {
+    int v = 120 + dbm; if (v < 0) v = 0; if (v > 79) v = 79;
+    return WF_ROWS - 1 - (v * WF_ROWS) / 80;
+}
+uint8_t kindOf(Lora::Proto p) { return p == Lora::Proto::MESHTASTIC ? 1 : p == Lora::Proto::MESHCORE ? 2 : 3; }
+uint16_t kindCol(uint8_t k) { return k == 1 ? Theme::CYAN : k == 2 ? Theme::PINK : Theme::PURPLE; }
+uint16_t scale565(uint16_t c, float a) {           // c at brightness a (0..1) over black
+    if (a <= 0) return 0; if (a > 1) a = 1;
+    return Theme::blend(0x0000, c, (uint16_t)(a * 256));
+}
 
-void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n) {
+// When the last packet landed, or when the page opened if none has.
+uint32_t lastPacketMs(const Lora::Hit* hits, uint8_t hn) {
+    uint32_t last = 0;
+    for (uint8_t i = 0; i < hn; i++) if (!last || (int32_t)(hits[i].ms - last) > 0) last = hits[i].ms;
+    return last ? last : s_openedAt;
+}
+
+// A deposit of heat in the newest column, for a packet: hot at its row, and
+// a cooler tail below it, the way the old waterfall drew its glow.
+void heatPacket(int col, int16_t rssi, Lora::Proto p) {
+    const int row = wfRow(rssi);
+    const uint8_t k = kindOf(p);
+    s_heat[col][row] = 1.5f; s_kind[col][row] = k;
+    for (int r = row + 1; r < WF_ROWS; r++) {
+        const float h = 0.55f / (float)(r - row);
+        if (h > s_heat[col][r]) { s_heat[col][r] = h; s_kind[col][r] = k; }
+    }
+}
+
+// The page opening: heat laid down from what the rings already hold, aged,
+// so the waterfall opens with the last 80 seconds in it rather than empty.
+void heatPrefill(uint32_t now) {
+    memset(s_heat, 0, sizeof s_heat); memset(s_kind, 0, sizeof s_kind);
+    int8_t trail[Lora::TRAIL_CAP];
+    const uint16_t tn = Lora::rssiTrail(trail, Lora::TRAIL_CAP);
+    for (uint16_t i = 0; i < tn; i++) {
+        const uint32_t ago = (uint32_t)(tn - 1 - i) * 1000;
+        const int col = WF_COLS - 1 - (int)(ago / WF_COL_MS);
+        if (col < 0) continue;
+        s_heat[col][wfRow(trail[i])] = 0.6f * expf(-(float)ago / 3000.0f) + 0.08f;
+    }
+    Lora::Hit hits[Lora::HIT_CAP];
+    const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    for (uint8_t i = 0; i < hn; i++) {
+        const uint32_t ago = now - hits[i].ms;
+        if (ago > 80000) continue;
+        heatPacket(WF_COLS - 1 - (int)(ago / WF_COL_MS), hits[i].rssi, hits[i].proto);
+        if ((int32_t)(hits[i].ms - s_hitSeen) > 0) s_hitSeen = hits[i].ms;
+    }
+    s_colAt = now;
+}
+
+void drawSquachy(TFT_eSPI& t, uint32_t now, uint32_t dt, uint32_t quiet) {
+    const bool sitting = quiet > SIT_MS;
+    if (!sitting) {
+        s_sqX += s_sqDir * (float)dt * 0.015f;
+        if (s_sqX > COL_X + COL_W - 14) s_sqDir = -1;
+        if (s_sqX < COL_X + 4) s_sqDir = 1;
+    }
+    const uint32_t hopAge = now - s_sqHopAt;
+    const int hop = (s_sqHopAt && hopAge < 600) ? (int)(sinf(hopAge / 600.0f * 3.14159f) * 7) : 0;
+    const int x = (int)s_sqX, ground = STRIP_Y + STRIP_H - 3, y = ground - 12 - hop;
+    const bool right = s_sqDir > 0, step = (now / 200) % 2;
+    const uint16_t fur = 0x79C2, face = Theme::SKIN_TAN;
+    t.fillRect(x + 2, y, 5, 4, fur);
+    t.fillRect(x + 1, y + 4, 7, sitting ? 5 : 6, fur);
+    t.fillRect(x + (right ? 4 : 2), y + 1, 3, 2, face);
+    t.drawPixel(x + (right ? 5 : 3), y + 1, 0x0000);
+    if (sitting) t.fillRect(x, y + 9, 9, 2, fur);
+    else { t.fillRect(x + 2 + (step ? 1 : 0), y + 10, 2, 2, fur); t.fillRect(x + 5 - (step ? 1 : 0), y + 10, 2, 2, fur); }
+    // Pointing at what he heard, in its network's colour.
+    if (s_sqHopAt && hopAge < 1600) t.drawFastHLine(x + (right ? 8 : -2), y + 4, 3, kindCol(kindOf(s_sqHopProto)));
+    // A sniff, now and then.
+    if (!sitting && (now / 900) % 5 == 0) t.drawPixel(x + (right ? 9 : -1), y + 1, Theme::blend(0x0000, Theme::WHITE, 90));
+}
+
+void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     const int x0 = COL_X + 1, w = COL_W - 2;
     t.fillRect(COL_X, STRIP_Y, COL_W, STRIP_H, 0x0000);
     for (int g = 1; g < 4; g++) t.drawFastHLine(x0, STRIP_Y + g * STRIP_H / 4, w, 0x0841);
-    // The floor, dotted.
-    if (n.floor > -128) { const int fy = yForDbm(n.floor, STRIP_Y, STRIP_H); for (int x = x0; x < x0 + w; x += 3) t.drawPixel(x, fy, 0x39C7); }
-    // Noise: one sample a second, right edge is now.
-    int8_t trail[Lora::TRAIL_CAP];
-    const uint16_t tn = Lora::rssiTrail(trail, Lora::TRAIL_CAP);
-    int lastX = -1, lastY = 0;
-    for (uint16_t i = 0; i < tn; i++) {
-        const int x = x0 + w - 1 - (int)((tn - 1 - i) * w / 80);
-        if (x < x0) continue;
-        const int y = yForDbm(trail[i], STRIP_Y, STRIP_H);
-        if (lastX >= 0) t.drawLine(lastX, lastY, x, y, 0x2D6A);
-        lastX = x; lastY = y;
-    }
-    // Hits: a spike per packet, in its network's colour, three pixels wide.
     Lora::Hit hits[Lora::HIT_CAP];
     const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    const uint32_t quiet = now - lastPacketMs(hits, hn);
+
+    // AURORA, behind everything: a soft band breathing along the floor.
+    const float aur = quiet > QUIET_MS ? fminf(1.0f, (quiet - QUIET_MS) / 6000.0f) : 0.0f;
+    const float ts = (now - s_openedAt) / 1000.0f;
+    if (aur > 0) {
+        for (int x = x0; x < x0 + w; x += 2) {
+            const float yy = STRIP_Y + STRIP_H - 7 + sinf(x * 0.05f + ts * 0.8f) * 2.5f + sinf(x * 0.013f - ts * 0.5f) * 1.5f;
+            const float k = 0.12f + 0.08f * sinf(ts * 1.3f + x * 0.02f);
+            t.fillRect(x, (int)yy - 2, 2, 5, scale565(Theme::CYAN, k * aur));
+        }
+    }
+
+    // PHOSPHOR: the afterglow fades, then the beam draws the newest part of
+    // the noise into it. Scaled to the ten dB either side of the floor, so
+    // the radio's own hiss fills the strip rather than lying flat on the
+    // bottom; the packets keep the full -120..-40 scale below.
+    if (!s_glow) s_glow = (uint8_t*)heap_caps_calloc(GLOW_W * GLOW_H, 1, MALLOC_CAP_SPIRAM);
+    int8_t trail[Lora::TRAIL_CAP];
+    const uint16_t tn = Lora::rssiTrail(trail, Lora::TRAIL_CAP);
+    if (s_glow) {
+        const float keep = expf(-(float)dt / 350.0f);
+        const uint16_t k8 = (uint16_t)(keep * 256);
+        for (int i = 0; i < GLOW_W * GLOW_H; i++) if (s_glow[i]) s_glow[i] = (uint8_t)((s_glow[i] * k8) >> 8);
+        const float fl = n.floor > -128 ? (float)n.floor : -110.0f;
+        auto gy = [&](int8_t v) { float f = ((float)v - (fl - 10)) / 20.0f; if (f < 0) f = 0; if (f > 1) f = 1; return (int)((1 - f) * (GLOW_H - 3)) + 1; };
+        auto gx = [&](uint16_t k) { return GLOW_W - 1 - (int)((tn - 1 - k) * GLOW_W / 80); };
+        auto plot = [&](int x, int y, uint8_t v) { if (x >= 0 && x < GLOW_W && y >= 0 && y < GLOW_H && s_glow[y * GLOW_W + x] < v) s_glow[y * GLOW_W + x] = v; };
+        if (tn > 1) {
+            const uint16_t idx = (uint16_t)(((now % 1800) * (uint32_t)(tn - 1)) / 1800);
+            uint16_t from = s_beamIdx <= idx ? s_beamIdx : 0;
+            if (idx - from > 6) from = idx - 6;
+            for (uint16_t k = from ? from - 1 : 0; k < idx; k++) {        // Bresenham, segment by segment
+                int xa = gx(k), ya = gy(trail[k]); const int xb = gx(k + 1), yb = gy(trail[k + 1]);
+                const int dx = abs(xb - xa), dy = -abs(yb - ya), sx = xa < xb ? 1 : -1, sy = ya < yb ? 1 : -1;
+                int err = dx + dy;
+                for (;;) { plot(xa, ya, 170); if (xa == xb && ya == yb) break; const int e2 = 2 * err; if (e2 >= dy) { err += dy; xa += sx; } if (e2 <= dx) { err += dx; ya += sy; } }
+            }
+            s_beamIdx = idx;
+            const int bx = gx(idx), by = gy(trail[idx]);
+            for (int dy = -1; dy <= 0; dy++) for (int dx = -1; dx <= 0; dx++) plot(bx + dx, by + dy, 255);
+        }
+        for (int y = 0; y < GLOW_H; y++) for (int x = 0; x < GLOW_W; x++) {
+            const uint8_t v = s_glow[y * GLOW_W + x];
+            if (v > 6) t.drawPixel(x0 + x, STRIP_Y + 1 + y, Theme::blend(0x0000, v > 230 ? 0xDFFC : 0x7FF9, v));
+        }
+    }
+
+    // The packets: a spike each, in its network's colour, on the full scale.
     int16_t peakHold[8] = { -128, -128, -128, -128, -128, -128, -128, -128 };
     for (uint8_t i = 0; i < hn; i++) {
         const uint32_t ago = now - hits[i].ms;
@@ -201,57 +339,101 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n) {
         const int y = yForDbm(hits[i].rssi, STRIP_Y, STRIP_H);
         t.fillRect(x - 1, y, 3, STRIP_Y + STRIP_H - 3 - y, netCol(hits[i].proto));
         const int bucket = (int)(ago / 10000); if (bucket < 8 && hits[i].rssi > peakHold[bucket]) peakHold[bucket] = hits[i].rssi;
+        // A new one: Squachy hops.
+        if ((int32_t)(hits[i].ms - s_sqHopSeen) > 0) { s_sqHopSeen = hits[i].ms; s_sqHopAt = now; s_sqHopProto = hits[i].proto; }
     }
     // Peak hold: the loudest packet of each ten seconds, in amber.
     for (int b = 7; b >= 0; b--) {
         if (peakHold[b] <= -128) continue;
         const int xa = x0 + w - 1 - (int)((b + 1) * w / 8), xb = x0 + w - 1 - (int)(b * w / 8);
-        const int y = yForDbm(peakHold[b], STRIP_Y, STRIP_H);
-        t.drawFastHLine(xa, y, xb - xa, dim(Theme::AMBER, 150));
+        t.drawFastHLine(xa, yForDbm(peakHold[b], STRIP_Y, STRIP_H), xb - xa, dim(Theme::AMBER, 150));
     }
+
+    // GHOST: the newest packet's spike, echoing leftward every 3.5 s and
+    // dimmer each time, for two minutes.
+    Lora::Packet pk;
+    if (Lora::packetAt(0, pk)) {
+        const uint32_t ago = now - pk.ms;
+        if (ago > 1500 && ago < GHOST_MS) {
+            const float fade = fmaxf(0.08f, 1.0f - (float)ago / GHOST_MS);
+            const float e = (ago % 3500) / 3500.0f;
+            const int x = x0 + w - 1 - (int)(e * 60);
+            const int y = yForDbm(pk.rssi, STRIP_Y, STRIP_H);
+            t.fillRect(x - 1, y, 3, STRIP_Y + STRIP_H - 3 - y, scale565(kindCol(kindOf(pk.proto)), 0.35f * fade * (1 - e)));
+        }
+    }
+
+    drawSquachy(t, now, dt, quiet);
     t.drawRect(COL_X, STRIP_Y, COL_W, STRIP_H, 0x2946);
-    small(t, COL_X + 4, STRIP_Y + 2, "80 s", dim(Theme::WHITE, 110), 0x0000);
-    char line[24];
-    snprintf(line, sizeof line, "PKT/MIN %u", (unsigned)n.pktMin);
-    small(t, COL_X + 130, STRIP_Y + 2, line, dim(Theme::WHITE, 110), 0x0000);
-    snprintf(line, sizeof line, "AIR %u.%u%%  CAD %u%%", (unsigned)(n.airPct10 / 10), (unsigned)(n.airPct10 % 10), (unsigned)n.busyPct);
-    small(t, COL_X + 130, STRIP_Y + 12, line, dim(Theme::WHITE, 110), 0x0000);
-    small(t, COL_X + 4, STRIP_Y + STRIP_H - 9, "- PEAK HOLD", dim(Theme::AMBER, 170), 0x0000);
+    // No labels on the instruments (asked for 2026-10-15): the picture is the
+    // reading, and the numbers that matter are in the tiles above.
 }
 
-void drawWaterfall(TFT_eSPI& t, uint32_t now) {
-    const int x0 = COL_X + 1, w = COL_W - 2;
+void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
+    const int x0 = COL_X + 1;
     t.fillRect(COL_X, WF_Y, COL_W, WF_H, 0x0000);
-    const int CW = 4, CH = 2, COLS = w / CW, ROWS = WF_H / CH;   // 52 columns of 1.5 s, 10 rows of 8 dB
-    int8_t trail[Lora::TRAIL_CAP];
-    const uint16_t tn = Lora::rssiTrail(trail, Lora::TRAIL_CAP);
-    // Noise: a warm cell where the sample sat.
-    for (uint16_t i = 0; i < tn; i++) {
-        const uint32_t ago = (uint32_t)(tn - 1 - i) * 1000;
-        const int col = COLS - 1 - (int)(ago / 1540);
-        if (col < 0) continue;
-        int v = 120 + trail[i]; if (v < 0) v = 0; if (v > 79) v = 79;
-        const int row = ROWS - 1 - (v * ROWS) / 80;
-        t.fillRect(x0 + col * CW, WF_Y + row * CH, CW - 1, CH, 0x3904);
-        if (row + 1 < ROWS) t.fillRect(x0 + col * CW, WF_Y + (row + 1) * CH, CW - 1, CH, 0x1882);
-    }
-    // Packets: a hot cell in the network's colour, and a glow below it.
     Lora::Hit hits[Lora::HIT_CAP];
     const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
-    for (uint8_t i = 0; i < hn; i++) {
-        const uint32_t ago = now - hits[i].ms;
-        if (ago > 80000) continue;
-        const int col = COLS - 1 - (int)(ago / 1540);
-        int v = 120 + hits[i].rssi; if (v < 0) v = 0; if (v > 79) v = 79;
-        const int row = ROWS - 1 - (v * ROWS) / 80;
-        const uint16_t c = netCol(hits[i].proto);
-        t.fillRect(x0 + col * CW, WF_Y + row * CH, CW - 1, CH, c);
-        for (int r = row + 1; r < ROWS; r++) t.fillRect(x0 + col * CW, WF_Y + r * CH, CW - 1, CH, dim(c, (uint16_t)(90 / (r - row))));
+    const uint32_t quiet = now - lastPacketMs(hits, hn);
+
+    // PHOSPHOR heat: a new column every 1.54 s takes the newest noise sample;
+    // a new packet heats the newest column; everything cools.
+    while (now - s_colAt >= WF_COL_MS) {
+        s_colAt += WF_COL_MS;
+        memmove(&s_heat[0][0], &s_heat[1][0], sizeof(float) * WF_ROWS * (WF_COLS - 1));
+        memmove(&s_kind[0][0], &s_kind[1][0], WF_ROWS * (WF_COLS - 1));
+        for (int r = 0; r < WF_ROWS; r++) { s_heat[WF_COLS - 1][r] = 0; s_kind[WF_COLS - 1][r] = 0; }
+        int8_t trail[Lora::TRAIL_CAP];
+        const uint16_t tn = Lora::rssiTrail(trail, Lora::TRAIL_CAP);
+        if (tn) s_heat[WF_COLS - 1][wfRow(trail[tn - 1])] = 0.6f;
+    }
+    for (uint8_t i = 0; i < hn; i++) if ((int32_t)(hits[i].ms - s_hitSeen) > 0) {
+        s_hitSeen = hits[i].ms;
+        heatPacket(WF_COLS - 1, hits[i].rssi, hits[i].proto);
+    }
+    // Noise cools in about three seconds, packets in about twelve.
+    const float coolN = expf(-(float)dt / 3000.0f), coolP = expf(-(float)dt / 12000.0f);
+    for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) s_heat[c][r] *= s_kind[c][r] ? coolP : coolN;
+
+    // AURORA, behind the heat.
+    const float aur = quiet > QUIET_MS ? fminf(1.0f, (quiet - QUIET_MS) / 6000.0f) : 0.0f;
+    if (aur > 0) {
+        const float ts = (now - s_openedAt) / 1000.0f;
+        for (int x = 0; x < COL_W - 2; x += 2) for (int r = 0; r < WF_ROWS; r++) {
+            const float v = sinf(x * 0.04f + ts * 0.7f + r * 0.6f) + sinf(x * 0.017f - ts * 0.4f) + sinf(r * 0.9f + ts * 0.9f);
+            if (v > 1.1f) t.fillRect(x0 + x, WF_Y + r * WF_CH, 2, WF_CH,
+                                     scale565(sinf(x * 0.01f + ts * 0.3f) > 0 ? Theme::PINK : Theme::CYAN, (v - 1.1f) * 0.18f * aur));
+        }
+    }
+
+    // The heat itself: warm amber for the noise, the network's colour for a
+    // packet, both fading as they cool.
+    for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) {
+        const float h = s_heat[c][r];
+        if (h < 0.03f) continue;
+        const uint16_t col = s_kind[c][r] ? scale565(kindCol(s_kind[c][r]), fminf(1.0f, h))
+                                          : scale565(0xFC80, fminf(1.0f, h * 0.8f));
+        t.fillRect(x0 + c * WF_CW, WF_Y + r * WF_CH, WF_CW - 1, WF_CH, col);
+    }
+
+    // GHOST: the newest packet's own bytes, raining slowly, brighter for
+    // bigger values, fading over two minutes.
+    Lora::Packet pk;
+    if (Lora::packetAt(0, pk)) {
+        const uint32_t ago = now - pk.ms;
+        if (ago < GHOST_MS) {
+            const float fade = fmaxf(0.08f, 1.0f - (float)ago / GHOST_MS);
+            const uint16_t c = kindCol(kindOf(pk.proto));
+            const uint8_t n = pk.len < 60 ? pk.len : 60;
+            for (uint8_t i = 0; i < n; i++) {
+                const int x = x0 + ((i * 37) % WF_COLS) * WF_CW;
+                const int yy = (int)fmodf(ago * 0.004f + i * 7, (float)(WF_H + 8)) - 4;
+                if (yy < 0 || yy >= WF_H - 1) continue;
+                t.fillRect(x, WF_Y + yy, 3, 2, scale565(c, (0.15f + 0.6f * pk.data[i] / 255.0f) * fade));
+            }
+        }
     }
     t.drawRect(COL_X, WF_Y, COL_W, WF_H, 0x2946);
-    small(t, COL_X + 4, WF_Y + WF_H - 8, "WATERFALL", dim(Theme::WHITE, 110), 0x0000);
-    small(t, COL_X + 150, WF_Y + WF_H - 8, "MT", Theme::CYAN, 0x0000);
-    small(t, COL_X + 172, WF_Y + WF_H - 8, "MC", Theme::PINK, 0x0000);
 }
 
 // ---- the dish ------------------------------------------------------------------
@@ -487,6 +669,10 @@ void uiLoraHomeInit(TFT_eSPI& t) {
     if (Settings::loraListen() == 1) s_net = 0;
     else if (Settings::loraListen() == 2) s_net = 1;
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
+    s_openedAt = millis();
+    s_lastFrame = 0;
+    s_beamIdx = 0;
+    heatPrefill(s_openedAt);
 }
 
 void uiLoraHomeToggleNet() { s_net = (uint8_t)(s_net ? 0 : 1); }
@@ -497,8 +683,10 @@ void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
     const Numbers n = numbers(now);
     drawHeader(t, now);
     drawTiles(t, n);
-    drawStrip(t, now, n);
-    drawWaterfall(t, now);
+    const uint32_t dt = s_lastFrame ? (now - s_lastFrame > 200 ? 200 : now - s_lastFrame) : 16;
+    s_lastFrame = now;
+    drawStrip(t, now, n, dt);
+    drawWaterfall(t, now, dt);
     drawDish(t, now);
     scanlines(t, COL_X, STRIP_Y, COL_W, WF_Y + WF_H - STRIP_Y);
     scanlines(t, DISH_CX - DISH_R, DISH_CY - DISH_R, 2 * DISH_R + 1, 2 * DISH_R + 1);
