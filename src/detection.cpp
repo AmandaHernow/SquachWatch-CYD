@@ -586,8 +586,8 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
         det.conf = confidenceFor(det.type);
         // ...except HACKER, which is the one type deliberately holding
         // signatures of very different strength. Reaching here on anything
-        // but the name means one of the exact ones matched: a service UUID
-        // that exists on no other product, or Flipper's own SIG company ID.
+        // but the name means the exact one matched: a Flipper Zero service
+        // UUID, which exists on no other product.
         // Arriving on the name alone means somebody's BLE device is called
         // "Flipper", which is a string, not a signature.
         if (det.type == DetectionType::HACKER) {
@@ -637,8 +637,7 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
             det.vendor = "iBeacon";
         } else if (det.type == DetectionType::HACKER) {
             // Everything that reaches HACKER over BLE is a Flipper: the
-            // three service UUIDs, the company ID and the name prefix are
-            // all theirs. The Pineapple and the deauther arrive over WiFi
+            // three service UUIDs and the name prefix are both theirs. The Pineapple and the deauther arrive over WiFi
             // and are labelled in processWiFiQ().
             det.vendor = "Flipper";
         } else if (det.type == DetectionType::SKIMMER && label) {
