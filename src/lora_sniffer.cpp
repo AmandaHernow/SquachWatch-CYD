@@ -694,13 +694,15 @@ bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
     if (prof.group == PG_MESH_EU && dbm > 14) dbm = 14;      // ETSI's 25 mW
     uint8_t f[256];
     uint16_t n = 0;
+    uint32_t key = 0;     // the identity a relay's copy of this will carry; see Msgs::note
     if (p == Proto::MESHCORE) {
         // A Public-channel text, sealed the way lora_meshcore_test seals one:
         // timestamp, a flags byte, "name: text", zero-padded, AES-128-ECB, then
         // two bytes of HMAC-SHA256 over the ciphertext.
         const MeshCore::Channel ch = MeshCore::channel(0);
         uint8_t plain[192] = {0};
-        LoraCrypto::wr32le(plain, Clock::trusted() ? Clock::nowEpoch() : 1790000000u);
+        const uint32_t stamp = Clock::trusted() ? Clock::nowEpoch() : 1790000000u;
+        LoraCrypto::wr32le(plain, stamp);
         plain[4] = 0x00;
         int tl = snprintf((char*)plain + 5, sizeof plain - 5, "%s: %s", name, text);
         if (tl < 0) return false;
@@ -717,6 +719,9 @@ bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
         LoraCrypto::hmacSha256(secret, 32, f + 5, clen, mac);
         f[3] = mac[0]; f[4] = mac[1];
         n = (uint16_t)(5 + clen);
+        // What a relay's copy decodes to: the name, the text as it fitted, the stamp.
+        MeshCore::GroupText g;
+        if (MeshCore::parseGroupText(plain, (uint8_t)plen, g)) key = Lora::Msgs::meshCoreKey(g.sender, g.text, g.timestamp);
     } else if (p == Proto::MESHTASTIC) {
         // A default-channel text, built the way lora_meshtastic_test builds one:
         // the 16-byte header in the clear, Data{portnum 1, text} under the
@@ -725,6 +730,7 @@ bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
         if (tl > 200) tl = 200;
         const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
         const uint32_t id = esp_random();
+        key = Lora::Msgs::meshtasticKey(from, id);
         LoraCrypto::wr32le(f, Meshtastic::BROADCAST);
         LoraCrypto::wr32le(f + 4, from);
         LoraCrypto::wr32le(f + 8, id);
@@ -760,7 +766,7 @@ bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
         Packet pk; memset(&pk, 0, sizeof pk);
         pk.proto = p; pk.profile = idx; pk.ms = millis();
         Msgs::note(p, 0, p == Proto::MESHTASTIC ? (uint8_t)Meshtastic::PORT_TEXT : (uint8_t)MeshCore::TYPE_GRP_TXT,
-                   "YOU", 0, text, pk, millis(), true, 0);
+                   "YOU", 0, text, pk, millis(), true, 0, key);
     }
     return ok;
 }

@@ -140,7 +140,7 @@ static void noteMeshtastic(const Packet& pk, uint32_t now) {
         case Meshtastic::PORT_TEXT:
         case Meshtastic::PORT_ALERT:
             Msgs::note(Proto::MESHTASTIC, d.channelIdx, (uint8_t)d.data.portnum, n.tag, d.hdr.from,
-                       d.text, pk, now, away == 0, away);
+                       d.text, pk, now, away == 0, away, Msgs::meshtasticKey(d.hdr.from, d.hdr.id));
             break;
         case Meshtastic::PORT_TELEMETRY:
             // The default is an hour; under thirty minutes is the floor the
@@ -170,7 +170,8 @@ static void noteMeshCore(const Packet& pk, uint32_t now, uint32_t epoch) {
     // a string the sender typed -- the frame carries no signature over it.
     if (d.haveGroup)
         Msgs::note(Proto::MESHCORE, d.channelIdx, MeshCore::TYPE_GRP_TXT, d.grp.sender, 0,
-                   d.grp.text, pk, now, flood && f.hops == 0, f.hops);
+                   d.grp.text, pk, now, flood && f.hops == 0, f.hops,
+                   Msgs::meshCoreKey(d.grp.sender, d.grp.text, d.grp.timestamp));
     // Adverts name their sender in full. Everything else names only the
     // last relay (the path's newest hash) or a destination, which is not
     // the sender -- so those count against the relay's row, as relayed.
