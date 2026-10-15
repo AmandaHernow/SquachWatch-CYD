@@ -168,19 +168,18 @@ void drawTiles(TFT_eSPI& t, const Numbers& n) {
 // and the packet hits (when, how loud, which network). The strip is the
 // noise and the hits as spikes; the waterfall is the same seconds as colour.
 //
-// And four things to keep them alive on a quiet hill, picked from the Quiet
-// Air Lab (2026-10-15):
-//   PHOSPHOR  the noise is traced by a beam into an afterglow layer that
-//             fades, like an old green scope, and the waterfall's cells hold
-//             heat that cools instead of snapping off. Real data, slow glass.
-//   AURORA    after half a minute with no packet, a dim drift through the
-//             waterfall and a glow breathing along the strip's floor. Pure
-//             decoration, and gone the instant a packet lands.
+// And three things to keep them alive on a quiet hill, from the Quiet Air
+// Lab (2026-10-15) and the owner's notes on the first go:
+//   PHOSPHOR  the noise is a solid line edge to edge, and a beam sweeps it
+//             from the left into an afterglow layer that fades, like an old
+//             green scope; the waterfall's cells hold heat that cools
+//             instead of snapping off. Real data, slow glass.
+//   SPARKLE   after a few quiet seconds the waterfall becomes a twinkling
+//             spectrum drifting leftward, with a few sparks behind the strip.
+//             Pure decoration, and gone the instant a packet lands.
 //   GHOST     the newest packet keeps echoing: its spike repeats fainter for
 //             two minutes, and its own bytes rain down the waterfall. Real.
-//   SQUACHY   walks the strip's floor, hops and points at a new packet, sits
-//             down when it has been quiet a while. Decoration.
-const uint32_t QUIET_MS = 30000, SIT_MS = 40000, GHOST_MS = 120000;
+const uint32_t QUIET_MS = 8000, GHOST_MS = 120000;
 const int GLOW_W = 208, GLOW_H = 44;              // inside the strip's border
 const int WF_COLS = 52, WF_ROWS = 10, WF_CW = 4, WF_CH = 2;
 const uint32_t WF_COL_MS = 1540;                  // 52 columns, 80 seconds
@@ -190,9 +189,6 @@ float    s_heat[WF_COLS][WF_ROWS];                // waterfall heat, 0..~1.5
 uint8_t  s_kind[WF_COLS][WF_ROWS];                // 0 noise, 1 Meshtastic, 2 MeshCore, 3 other
 uint32_t s_lastFrame = 0, s_colAt = 0, s_hitSeen = 0, s_openedAt = 0;
 uint16_t s_beamIdx = 0;
-float    s_sqX = 40, s_sqDir = 1;                 // SQUACHY
-uint32_t s_sqHopAt = 0, s_sqHopSeen = 0;
-Lora::Proto s_sqHopProto = Lora::Proto::UNKNOWN;
 
 int yForDbm(int16_t dbm, int top, int h) {
     // -120 at the bottom, -40 at the top.
@@ -252,29 +248,23 @@ void heatPrefill(uint32_t now) {
     s_colAt = now;
 }
 
-void drawSquachy(TFT_eSPI& t, uint32_t now, uint32_t dt, uint32_t quiet) {
-    const bool sitting = quiet > SIT_MS;
-    if (!sitting) {
-        s_sqX += s_sqDir * (float)dt * 0.015f;
-        if (s_sqX > COL_X + COL_W - 14) s_sqDir = -1;
-        if (s_sqX < COL_X + 4) s_sqDir = 1;
-    }
-    const uint32_t hopAge = now - s_sqHopAt;
-    const int hop = (s_sqHopAt && hopAge < 600) ? (int)(sinf(hopAge / 600.0f * 3.14159f) * 7) : 0;
-    const int x = (int)s_sqX, ground = STRIP_Y + STRIP_H - 3, y = ground - 12 - hop;
-    const bool right = s_sqDir > 0, step = (now / 200) % 2;
-    const uint16_t fur = 0x79C2, face = Theme::SKIN_TAN;
-    t.fillRect(x + 2, y, 5, 4, fur);
-    t.fillRect(x + 1, y + 4, 7, sitting ? 5 : 6, fur);
-    t.fillRect(x + (right ? 4 : 2), y + 1, 3, 2, face);
-    t.drawPixel(x + (right ? 5 : 3), y + 1, 0x0000);
-    if (sitting) t.fillRect(x, y + 9, 9, 2, fur);
-    else { t.fillRect(x + 2 + (step ? 1 : 0), y + 10, 2, 2, fur); t.fillRect(x + 5 - (step ? 1 : 0), y + 10, 2, 2, fur); }
-    // Pointing at what he heard, in its network's colour.
-    if (s_sqHopAt && hopAge < 1600) t.drawFastHLine(x + (right ? 8 : -2), y + 4, 3, kindCol(kindOf(s_sqHopProto)));
-    // A sniff, now and then.
-    if (!sitting && (now / 900) % 5 == 0) t.drawPixel(x + (right ? 9 : -1), y + 1, Theme::blend(0x0000, Theme::WHITE, 90));
+// A hue (0..359) at full saturation, as RGB565 at brightness a.
+uint16_t hue565(int hue, float a) {
+    hue %= 360; if (hue < 0) hue += 360;
+    const int sx = hue / 60, f = (hue % 60) * 255 / 60;
+    int r, g, b;
+    switch (sx) { case 0: r = 255; g = f; b = 0; break; case 1: r = 255 - f; g = 255; b = 0; break;
+                  case 2: r = 0; g = 255; b = f; break;      case 3: r = 0; g = 255 - f; b = 255; break;
+                  case 4: r = f; g = 0; b = 255; break;      default: r = 255; g = 0; b = 255 - f; break; }
+    if (a < 0) a = 0; if (a > 1) a = 1;
+    r = (int)(r * a); g = (int)(g * a); b = (int)(b * a);
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
+// A cheap, steady hash: the same cell twinkles the same way every pass.
+uint32_t mix32(uint32_t x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; }
+// How lit the sparkle field is: nothing while packets are arriving, then a
+// two-second fade in once it has been quiet for QUIET_MS.
+float sparkleLevel(uint32_t quiet) { return quiet > QUIET_MS ? fminf(1.0f, (quiet - QUIET_MS) / 2000.0f) : 0.0f; }
 
 void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     const int x0 = COL_X + 1, w = COL_W - 2;
@@ -284,14 +274,21 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
     const uint32_t quiet = now - lastPacketMs(hits, hn);
 
-    // AURORA, behind everything: a soft band breathing along the floor.
-    const float aur = quiet > QUIET_MS ? fminf(1.0f, (quiet - QUIET_MS) / 6000.0f) : 0.0f;
-    const float ts = (now - s_openedAt) / 1000.0f;
-    if (aur > 0) {
-        for (int x = x0; x < x0 + w; x += 2) {
-            const float yy = STRIP_Y + STRIP_H - 7 + sinf(x * 0.05f + ts * 0.8f) * 2.5f + sinf(x * 0.013f - ts * 0.5f) * 1.5f;
-            const float k = 0.12f + 0.08f * sinf(ts * 1.3f + x * 0.02f);
-            t.fillRect(x, (int)yy - 2, 2, 5, scale565(Theme::CYAN, k * aur));
+    // SPARKLE, behind everything: a few dim twinkles drifting left, in the
+    // spectrum's colours, while it is quiet.
+    const float spk = sparkleLevel(quiet);
+    if (spk > 0) {
+        const uint32_t drift = now / 220;                 // one pixel every 0.22 s
+        for (int i = 0; i < 24; i++) {
+            const uint32_t h = mix32(i * 2654435761u);
+            const int x = x0 + (int)((h % w + w - drift % w) % w);
+            const int y = STRIP_Y + 2 + (int)((h >> 8) % (STRIP_H - 6));
+            const float tw = sinf(now * (0.002f + (h % 7) * 0.0006f) + (h >> 16)) * 0.5f + 0.5f;
+            const float a = tw * tw * tw * 0.45f * spk;
+            if (a < 0.05f) continue;
+            const uint16_t c = hue565((int)((x - x0) * 360 / w + now / 40), a);
+            t.drawPixel(x, y, c);
+            if (a > 0.3f) { t.drawPixel(x - 1, y, hue565((int)((x - x0) * 360 / w + now / 40), a * 0.4f)); t.drawPixel(x + 1, y, hue565((int)((x - x0) * 360 / w + now / 40), a * 0.4f)); }
         }
     }
 
@@ -308,7 +305,9 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
         for (int i = 0; i < GLOW_W * GLOW_H; i++) if (s_glow[i]) s_glow[i] = (uint8_t)((s_glow[i] * k8) >> 8);
         const float fl = n.floor > -128 ? (float)n.floor : -110.0f;
         auto gy = [&](int8_t v) { float f = ((float)v - (fl - 10)) / 20.0f; if (f < 0) f = 0; if (f > 1) f = 1; return (int)((1 - f) * (GLOW_H - 3)) + 1; };
-        auto gx = [&](uint16_t k) { return GLOW_W - 1 - (int)((tn - 1 - k) * GLOW_W / 80); };
+        // Edge to edge whatever the trail holds: a page opened a minute after
+        // boot has fewer than 80 samples, and they used to start partway in.
+        auto gx = [&](uint16_t k) { return tn > 1 ? (int)((uint32_t)k * (GLOW_W - 1) / (tn - 1)) : GLOW_W - 1; };
         auto plot = [&](int x, int y, uint8_t v) { if (x >= 0 && x < GLOW_W && y >= 0 && y < GLOW_H && s_glow[y * GLOW_W + x] < v) s_glow[y * GLOW_W + x] = v; };
         if (tn > 1) {
             const uint16_t idx = (uint16_t)(((now % 1800) * (uint32_t)(tn - 1)) / 1800);
@@ -324,6 +323,10 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
             const int bx = gx(idx), by = gy(trail[idx]);
             for (int dy = -1; dy <= 0; dy++) for (int dx = -1; dx <= 0; dx++) plot(bx + dx, by + dy, 255);
         }
+        // The solid line: every sample joined, always there, dim phosphor.
+        for (uint16_t k = 0; k + 1 < tn; k++)
+            t.drawLine(x0 + gx(k), STRIP_Y + 1 + gy(trail[k]), x0 + gx(k + 1), STRIP_Y + 1 + gy(trail[k + 1]), 0x1A86);
+        // And the glow over it, bright where the beam has just been.
         for (int y = 0; y < GLOW_H; y++) for (int x = 0; x < GLOW_W; x++) {
             const uint8_t v = s_glow[y * GLOW_W + x];
             if (v > 6) t.drawPixel(x0 + x, STRIP_Y + 1 + y, Theme::blend(0x0000, v > 230 ? 0xDFFC : 0x7FF9, v));
@@ -339,8 +342,6 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
         const int y = yForDbm(hits[i].rssi, STRIP_Y, STRIP_H);
         t.fillRect(x - 1, y, 3, STRIP_Y + STRIP_H - 3 - y, netCol(hits[i].proto));
         const int bucket = (int)(ago / 10000); if (bucket < 8 && hits[i].rssi > peakHold[bucket]) peakHold[bucket] = hits[i].rssi;
-        // A new one: Squachy hops.
-        if ((int32_t)(hits[i].ms - s_sqHopSeen) > 0) { s_sqHopSeen = hits[i].ms; s_sqHopAt = now; s_sqHopProto = hits[i].proto; }
     }
     // Peak hold: the loudest packet of each ten seconds, in amber.
     for (int b = 7; b >= 0; b--) {
@@ -363,7 +364,6 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
         }
     }
 
-    drawSquachy(t, now, dt, quiet);
     t.drawRect(COL_X, STRIP_Y, COL_W, STRIP_H, 0x2946);
     // No labels on the instruments (asked for 2026-10-15): the picture is the
     // reading, and the numbers that matter are in the tiles above.
@@ -395,14 +395,19 @@ void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
     const float coolN = expf(-(float)dt / 3000.0f), coolP = expf(-(float)dt / 12000.0f);
     for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) s_heat[c][r] *= s_kind[c][r] ? coolP : coolN;
 
-    // AURORA, behind the heat.
-    const float aur = quiet > QUIET_MS ? fminf(1.0f, (quiet - QUIET_MS) / 6000.0f) : 0.0f;
-    if (aur > 0) {
-        const float ts = (now - s_openedAt) / 1000.0f;
-        for (int x = 0; x < COL_W - 2; x += 2) for (int r = 0; r < WF_ROWS; r++) {
-            const float v = sinf(x * 0.04f + ts * 0.7f + r * 0.6f) + sinf(x * 0.017f - ts * 0.4f) + sinf(r * 0.9f + ts * 0.9f);
-            if (v > 1.1f) t.fillRect(x0 + x, WF_Y + r * WF_CH, 2, WF_CH,
-                                     scale565(sinf(x * 0.01f + ts * 0.3f) > 0 ? Theme::PINK : Theme::CYAN, (v - 1.1f) * 0.18f * aur));
+    // SPARKLE, behind the heat: a twinkling spectrum, drifting leftward at
+    // the waterfall's own pace, hue sweeping across it. Each cell twinkles on
+    // its own steady rhythm; about one in four is lit at any moment.
+    const float spk = sparkleLevel(quiet);
+    if (spk > 0) {
+        const uint32_t shift = now / 400;                // a column every 0.4 s
+        for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) {
+            const uint32_t h = mix32((uint32_t)(c + shift) * 73856093u ^ (uint32_t)r * 19349663u);
+            if ((h & 3) != 0) continue;
+            const float tw = sinf(now * (0.0015f + (h >> 4 & 7) * 0.0005f) + (float)(h >> 8 & 255) * 0.0246f) * 0.5f + 0.5f;
+            const float a = (0.12f + 0.88f * tw * tw * tw) * spk * 0.85f;
+            const int hue = c * 360 / WF_COLS + r * 12 + (int)(now / 50);
+            t.fillRect(x0 + c * WF_CW, WF_Y + r * WF_CH, WF_CW - 1, WF_CH, hue565(hue, a));
         }
     }
 
