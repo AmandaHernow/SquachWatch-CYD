@@ -587,6 +587,49 @@ const char* compass(float deg) {
     return N[i];
 }
 
+// The ping (asked for 2026-10-16): rings that open out from the middle of
+// the dish. A soft sonar pulse once a sweep, in the theme's accent, and a
+// bright double ripple in the network's colour whenever a packet lands.
+struct Ping { uint32_t at; uint16_t col; bool loud; };
+Ping     s_pings[6];
+uint8_t  s_pingNext = 0;
+uint32_t s_pingSeen = 0, s_pingSweep = 0;
+const uint32_t PING_MS = 1400;
+
+void pingStart(uint32_t now, uint16_t col, bool loud) {
+    s_pings[s_pingNext] = Ping{ now ? now : 1, col, loud };
+    s_pingNext = (uint8_t)((s_pingNext + 1) % 6);
+}
+
+void drawPings(TFT_eSPI& t, uint32_t now, int cx, int cy, int R) {
+    // New packets, and the start of each sweep.
+    Lora::Hit hits[Lora::HIT_CAP];
+    const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    for (uint8_t i = 0; i < hn; i++) if ((int32_t)(hits[i].ms - s_pingSeen) > 0) {
+        s_pingSeen = hits[i].ms;
+        if (now - hits[i].ms < 2000) pingStart(now, netCol(hits[i].proto), true);
+    }
+    if (now / 4000 != s_pingSweep) { s_pingSweep = now / 4000; pingStart(now, Theme::CYAN, false); }
+    for (const Ping& p : s_pings) {
+        if (!p.at) continue;
+        const uint32_t age = now - p.at;
+        if (age >= PING_MS) continue;
+        const float u = (float)age / PING_MS;
+        const float ease = 1.0f - (1.0f - u) * (1.0f - u);          // fast out, slowing at the rim
+        const int r = (int)(2 + ease * (R - 3));
+        const float a = (1.0f - u) * (p.loud ? 1.0f : 0.35f);
+        t.drawCircle(cx, cy, r, scale565(p.col, a));
+        if (r > 2) t.drawCircle(cx, cy, r - 1, scale565(p.col, a * 0.45f));      // a soft inner edge
+        if (r > 4) t.drawCircle(cx, cy, r - 3, scale565(p.col, a * 0.15f));
+        // A loud ping rings twice: a second, thinner ring a beat behind.
+        if (p.loud && age > 220) {
+            const float u2 = (float)(age - 220) / PING_MS, e2 = 1.0f - (1.0f - u2) * (1.0f - u2);
+            const int r2 = (int)(2 + e2 * (R - 3));
+            if (r2 < R) t.drawCircle(cx, cy, r2, scale565(p.col, (1.0f - u2) * 0.5f));
+        }
+    }
+}
+
 void drawDish(TFT_eSPI& t, uint32_t now) {
     const int cx = DISH_CX, cy = DISH_CY, R = DISH_R;
     t.fillCircle(cx, cy, R, 0x0041);
@@ -599,6 +642,7 @@ void drawDish(TFT_eSPI& t, uint32_t now) {
     }
     t.drawFastHLine(cx - R, cy, 2 * R, 0x0A45);
     t.drawFastVLine(cx, cy - R, 2 * R, 0x0A45);
+    drawPings(t, now, cx, cy, R);
     // The sweep: a line going round every four seconds, with a fading trail.
     const float sweep = ((now % 4000) / 4000.0f) * 6.2831853f - 1.5707963f;
     for (int k = 3; k >= 0; k--) {
