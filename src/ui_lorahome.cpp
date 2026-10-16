@@ -109,8 +109,80 @@ void drawHeader(TFT_eSPI& t, uint32_t now) {
     if (Lora::mode() != Lora::Mode::OFF) t.fillCircle(296, 17, 2, Theme::GREEN);
 }
 
+// ---- one snapshot a frame -------------------------------------------------------
+// Everything the page shows from the radio lives behind the sniffer's lock,
+// and each read gives up after 10-20 ms when the radio task is holding it --
+// mid-frame, on a busy band. The page used to read straight through and draw
+// whatever came back, so a timed-out read drew a frame with no nodes, no
+// spikes or no chats, and the radar flashed (2026-10-16). Now the page takes
+// its own copies, the hits every frame and the slower things on their own
+// clocks, and keeps the last good copy whenever a read comes back empty
+// because it timed out rather than because there is nothing.
+Lora::Hit  s_pHits[Lora::HIT_CAP];
+uint8_t    s_pHitN = 0;
+const uint8_t SNAP_NODES = 32;                    // plenty for a dish this size
+// The big copies, about 13 KB, in PSRAM: the T-Deck has 7.8 MB of it free
+// and its internal RAM is what the radios and the frame push live on.
+struct PageSnap {
+    Lora::Nodes::Node nodes[SNAP_NODES], nodesTmp[SNAP_NODES];
+    Lora::Msgs::Msg   keep[2][6], keepTmp[2][6];
+    Lora::Packet      pkt;
+};
+PageSnap*  s_ps = nullptr;
+uint8_t    s_pNodeN = 0;
+uint32_t   s_pNodesAt = 0;
+bool       s_pHavePkt = false;
+uint32_t   s_pPktAt = 0;
+uint8_t    s_pKept[2] = { 0, 0 };
+uint16_t   s_pCount[2] = { 0, 0 };
+uint32_t   s_pMsgAt = 0;
+
+void refreshSnapshot(uint32_t now, bool force) {
+    if (!s_ps) s_ps = (PageSnap*)heap_caps_calloc(1, sizeof(PageSnap), MALLOC_CAP_SPIRAM);
+    if (!s_ps) return;
+    {   // The hits: the ring only ever grows, so an empty answer after a full
+        // one is a timeout.
+        Lora::Hit tmp[Lora::HIT_CAP];
+        const uint8_t n = Lora::hitTrail(tmp, Lora::HIT_CAP);
+        if (n || !s_pHitN) { memcpy(s_pHits, tmp, sizeof(Lora::Hit) * n); s_pHitN = n; }
+    }
+    if (force || now - s_pNodesAt >= 400) {
+        const uint8_t n = Lora::nodeSnapshot(s_ps->nodesTmp, SNAP_NODES);
+        if (n || Lora::nodeCount() == 0) {
+            memcpy(s_ps->nodes, s_ps->nodesTmp, sizeof(Lora::Nodes::Node) * n);
+            s_pNodeN = n; s_pNodesAt = now;
+        }
+    }
+    if (force || now - s_pPktAt >= 200) {
+        if (Lora::packetAt(0, s_ps->pkt)) { s_pHavePkt = true; s_pPktAt = now; }
+    }
+    if (force || now - s_pMsgAt >= 500) {
+        // A walk that hits a timeout part-way is thrown away whole.
+        auto& keep = s_ps->keepTmp;
+        uint8_t kept[2] = { 0, 0 };
+        uint16_t count[2] = { 0, 0 };
+        const int lines = (CHAT_BOTTOM - (CHAT_Y + 15)) / CHAT_ROW_H;
+        const uint16_t n = Lora::msgCount();
+        Lora::Msgs::Msg m;
+        bool ok = true;
+        for (uint16_t i = 0; i < n; i++) {
+            if (!Lora::msgAt(i, m)) { ok = false; break; }
+            const int c = m.proto == Lora::Proto::MESHTASTIC ? 0 : m.proto == Lora::Proto::MESHCORE ? 1 : -1;
+            if (c < 0) continue;
+            count[c]++;
+            if (kept[c] < lines && kept[c] < 6) keep[c][kept[c]++] = m;
+        }
+        if (ok) {
+            memcpy(s_ps->keep, keep, sizeof keep);
+            s_pKept[0] = kept[0]; s_pKept[1] = kept[1];
+            s_pCount[0] = count[0]; s_pCount[1] = count[1];
+            s_pMsgAt = now;
+        }
+    }
+}
+
 // ---- the numbers -------------------------------------------------------------
-struct Numbers { int16_t now, floor, peak; int16_t margin; uint16_t pktMin; uint8_t airPct10, busyPct; };
+struct Numbers { int16_t now, floor, peak; int16_t margin; };
 
 Numbers numbers(uint32_t nowMs) {
     Numbers n = {};
@@ -119,25 +191,13 @@ Numbers numbers(uint32_t nowMs) {
     n.now = tn ? trail[tn - 1] : -128;
     n.floor = Lora::stats().noiseDbm ? Lora::stats().noiseDbm : -128;
     n.peak = -128;
-    Lora::Hit hits[Lora::HIT_CAP];
-    const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    const Lora::Hit* hits = s_pHits;
+    const uint8_t hn = s_pHitN;
     for (uint8_t i = 0; i < hn; i++) if (nowMs - hits[i].ms < 80000 && hits[i].rssi > n.peak) n.peak = hits[i].rssi;
     // How far the loudest packet of the last 80 s stood above the floor: a
     // link quality. NOW over the floor sits near zero on a quiet band, and a
     // quiet band is not a bad one (the first walk, 2026-10-15).
     n.margin = (n.peak > -128 && n.floor > -128) ? (int16_t)(n.peak - n.floor) : -128;
-    // The last minute: packets and their airtime, off the ring.
-    uint32_t air = 0; uint16_t cnt = 0;
-    Lora::Packet pk;
-    for (uint16_t i = 0; i < 64; i++) {
-        if (!Lora::packetAt(i, pk)) break;
-        if (nowMs - pk.ms > 60000) break;
-        cnt++; air += pk.toaUs / 1000;
-    }
-    n.pktMin = cnt;
-    n.airPct10 = (uint8_t)((air * 1000 / 60000 > 999) ? 999 : air * 1000 / 60000);   // tenths of a percent
-    const Lora::Stats& st = Lora::stats();
-    n.busyPct = st.cadRounds ? (uint8_t)((uint64_t)st.cadHits * 100 / st.cadRounds) : 0;
     return n;
 }
 
@@ -239,8 +299,8 @@ void heatPrefill(uint32_t now) {
         if (col < 0) continue;
         s_heat[col][wfRow(trail[i])] = 0.6f * expf(-(float)ago / 3000.0f) + 0.08f;
     }
-    Lora::Hit hits[Lora::HIT_CAP];
-    const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    const Lora::Hit* hits = s_pHits;
+    const uint8_t hn = s_pHitN;
     for (uint8_t i = 0; i < hn; i++) {
         const uint32_t ago = now - hits[i].ms;
         if (ago > 80000) continue;
@@ -275,17 +335,17 @@ float sparkleLevel(uint32_t quiet) { return quiet > QUIET_MS ? fminf(1.0f, (quie
 // ---- the rain (the Rain Lab's picks, 2026-10-15) -----------------------------------
 // The DIGITAL background's rain, brought in quietly, the same way it draws:
 // ASCII from the 6x8 font, a white-hot head, a trail that fades.
-//   CODE FALL  glyph columns falling through the waterfall in the theme's
-//              colours, and fainter behind the strip's phosphor line, so code
-//              falls from the top of the instruments to the bottom. The
-//              meteor, the spikes and the packets' heat stay in front.
+//   CODE FALL  faint glyph columns in the theme's colours behind the strip's
+//              phosphor line; the meteor and the spikes stay in front. (It
+//              fell through the waterfall too until 2026-10-16, when the
+//              owner took it out of there.)
 //   CHAT RAIN  a dim rain inside each message box in that network's colour,
 //              cyan behind Meshtastic and pink behind MeshCore, under the
 //              lines. (A backdrop through the page's background came out the
 //              same day: the owner wanted it in the boxes, not around them.)
 const char RAIN_GLYPHS[] = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*<>{}[]/\\|+=~SASQUACH";
 const int  RAIN_GN = sizeof(RAIN_GLYPHS) - 1;
-const float CODE_WF_A = 0.65f, CODE_STRIP_A = 0.25f, CHAT_RAIN_A = 0.3f;
+const float CODE_STRIP_A = 0.25f, CHAT_RAIN_A = 0.3f;
 struct RainCol { float y, v; uint8_t len, depth; bool active; char g[16]; };
 struct Rain { RainCol c[54]; uint8_t n; int16_t x0, spacing, top, h; float density; uint32_t seed; bool ready; };
 Rain s_code = {}, s_chatMt = {}, s_chatMc = {};
@@ -359,8 +419,8 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     rainDraw(t, s_code, CODE_STRIP_A, [](int, int) { return true; },
              [&](const RainCol&, int x) { return themeRamp((float)(x - COL_X) / COL_W + now / 9000.0f, 1.0f); });
     t.resetViewport();
-    Lora::Hit hits[Lora::HIT_CAP];
-    const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    const Lora::Hit* hits = s_pHits;
+    const uint8_t hn = s_pHitN;
     const uint32_t quiet = now - lastPacketMs(hits, hn);
 
     // SPARKLE, behind everything: a few dim twinkles drifting left, in the
@@ -481,8 +541,8 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
 
     // GHOST: the newest packet's spike, echoing leftward every 3.5 s and
     // dimmer each time, for two minutes.
-    Lora::Packet pk;
-    if (Lora::packetAt(0, pk)) {
+    if (s_pHavePkt) {
+        const Lora::Packet& pk = s_ps->pkt;
         const uint32_t ago = now - pk.ms;
         if (ago > 1500 && ago < GHOST_MS) {
             const float fade = fmaxf(0.08f, 1.0f - (float)ago / GHOST_MS);
@@ -501,8 +561,8 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
 void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
     const int x0 = COL_X + 1;
     t.fillRect(COL_X, WF_Y, COL_W, WF_H, 0x0000);
-    Lora::Hit hits[Lora::HIT_CAP];
-    const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    const Lora::Hit* hits = s_pHits;
+    const uint8_t hn = s_pHitN;
     const uint32_t quiet = now - lastPacketMs(hits, hn);
 
     // PHOSPHOR heat: a new column every 1.54 s takes the newest noise sample;
@@ -541,12 +601,6 @@ void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
         }
     }
 
-    // CODE FALL, in the waterfall's own rows, over the twinkle and under the
-    // heat, so the packets still burn over it.
-    t.setViewport(x0, WF_Y, COL_W - 2, WF_H, false);
-    rainDraw(t, s_code, CODE_WF_A, [](int, int) { return true; },
-             [&](const RainCol&, int x) { return themeRamp((float)(x - COL_X) / COL_W + now / 9000.0f, 1.0f); });
-    t.resetViewport();
 
     // The heat itself: warm amber for the noise, the network's colour for a
     // packet, both fading as they cool.
@@ -560,8 +614,8 @@ void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
 
     // GHOST: the newest packet's own bytes, raining slowly, brighter for
     // bigger values, fading over two minutes.
-    Lora::Packet pk;
-    if (Lora::packetAt(0, pk)) {
+    if (s_pHavePkt) {
+        const Lora::Packet& pk = s_ps->pkt;
         const uint32_t ago = now - pk.ms;
         if (ago < GHOST_MS) {
             const float fade = fmaxf(0.08f, 1.0f - (float)ago / GHOST_MS);
@@ -603,8 +657,8 @@ void pingStart(uint32_t now, uint16_t col, bool loud) {
 
 void drawPings(TFT_eSPI& t, uint32_t now, int cx, int cy, int R) {
     // New packets, and the start of each sweep.
-    Lora::Hit hits[Lora::HIT_CAP];
-    const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
+    const Lora::Hit* hits = s_pHits;
+    const uint8_t hn = s_pHitN;
     for (uint8_t i = 0; i < hn; i++) if ((int32_t)(hits[i].ms - s_pingSeen) > 0) {
         s_pingSeen = hits[i].ms;
         if (now - hits[i].ms < 2000) pingStart(now, netCol(hits[i].proto), true);
@@ -650,10 +704,10 @@ void drawDish(TFT_eSPI& t, uint32_t now) {
         t.drawLine(cx, cy, cx + (int)lroundf(R * cosf(a)), cy + (int)lroundf(R * sinf(a)), dim(Theme::CYAN, (uint16_t)(k ? 60 - k * 14 : 180)));
     }
     // The nodes.
-    // The newest 32 are plenty for a dish this size; the table holds 96.
-    const uint8_t SNAP = 32;
-    static Lora::Nodes::Node nodes[SNAP];
-    const uint8_t nn = Lora::nodeSnapshot(nodes, SNAP);
+    // The page's own copy (see refreshSnapshot); the table holds 96.
+    const uint8_t SNAP = SNAP_NODES;
+    const Lora::Nodes::Node* nodes = s_ps ? s_ps->nodes : nullptr;
+    const uint8_t nn = s_ps ? s_pNodeN : 0;
     const Gnss::Fix& fix = Gnss::fix();
     const bool haveFix = fix.valid && Gnss::fresh(now);
     Blip blips[SNAP];
@@ -770,20 +824,11 @@ void drawChats(TFT_eSPI& t, uint32_t now) {
     const int xs[2] = { 4, 162 };
     const uint16_t cols[2] = { Theme::CYAN, Theme::PINK };
     const char* names[2] = { "MESHTASTIC", "MESHCORE" };
-    uint16_t count[2] = { 0, 0 };
-    const int lines = (CHAT_BOTTOM - (CHAT_Y + 15)) / CHAT_ROW_H;
-    // Walk the ring newest first once for both columns.
-    static Lora::Msgs::Msg keep[2][6];
-    uint8_t kept[2] = { 0, 0 };
-    const uint16_t n = Lora::msgCount();
-    Lora::Msgs::Msg m;
-    for (uint16_t i = 0; i < n; i++) {
-        if (!Lora::msgAt(i, m)) break;
-        const int c = m.proto == Lora::Proto::MESHTASTIC ? 0 : m.proto == Lora::Proto::MESHCORE ? 1 : -1;
-        if (c < 0) continue;
-        count[c]++;
-        if (kept[c] < lines && kept[c] < 6) keep[c][kept[c]++] = m;
-    }
+    // The page's own copy, refreshed twice a second (see refreshSnapshot).
+    const uint16_t* count = s_pCount;
+    if (!s_ps) return;
+    auto& keep = s_ps->keep;
+    const uint8_t* kept = s_pKept;
     const uint16_t unread = uiLoraChatUnread();
     for (int c = 0; c < 2; c++) {
         const int x = xs[c];
@@ -878,6 +923,7 @@ void uiLoraHomeInit(TFT_eSPI& t) {
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
     s_openedAt = millis();
     s_lastFrame = 0;
+    refreshSnapshot(s_openedAt, true);
     s_beamIdx = 0;
     heatPrefill(s_openedAt);
 }
@@ -886,12 +932,13 @@ void uiLoraHomeToggleNet() { s_net = (uint8_t)(s_net ? 0 : 1); }
 uint8_t uiLoraHomeNet() { return s_net; }
 
 void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
+    refreshSnapshot(now, false);
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
     const uint32_t dt = s_lastFrame ? (now - s_lastFrame > 200 ? 200 : now - s_lastFrame) : 16;
     s_lastFrame = now;
     // The rain: CODE FALL down the instruments, and a CHAT RAIN in each
     // message box; each is drawn inside its own box, clipped.
-    if (!s_code.ready)   rainInit(s_code, COL_X + 2, COL_X + COL_W - 4, 6, STRIP_Y, WF_Y + WF_H - STRIP_Y, 0.7f, 0xC0DE);
+    if (!s_code.ready)   rainInit(s_code, COL_X + 2, COL_X + COL_W - 4, 6, STRIP_Y, STRIP_H, 0.7f, 0xC0DE);
     if (!s_chatMt.ready) rainInit(s_chatMt, 7, 155, 6, CHAT_Y + 14, CHAT_BOTTOM - CHAT_Y - 14, 0.5f, 0xCA75);
     if (!s_chatMc.ready) rainInit(s_chatMc, 165, 313, 6, CHAT_Y + 14, CHAT_BOTTOM - CHAT_Y - 14, 0.5f, 0x7C0E);
     rainStep(s_code, dt, 0.45f);
