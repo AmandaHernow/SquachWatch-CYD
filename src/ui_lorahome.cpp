@@ -700,17 +700,26 @@ void drawCompose(TFT_eSPI& t, uint32_t now) {
         while (*p && t.textWidth(p) > w - 10) p++;
         small(t, 8, COMPOSE_Y + 2, p, Theme::WHITE, dim(Theme::WHITE, 18));
     }
-    // The switch: which network Enter sends to.
-    s_switchX = 240; s_switchW = 76;
-    t.fillRoundRect(s_switchX, COMPOSE_Y, s_switchW, COMPOSE_H, 2, dim(accent, 40));
-    t.drawRoundRect(s_switchX, COMPOSE_Y, s_switchW, COMPOSE_H, 2, accent);
-    small(t, s_switchX + 4, COMPOSE_Y + 2, s_net ? "> MESHCORE" : "> MESHTASTIC", accent, dim(accent, 40));
 }
 
 void drawBar(TFT_eSPI& t) {
     t.fillRect(0, BAR_Y, t.width(), t.height() - BAR_Y, 0x0862);
     small(t, 6, BAR_Y + 3, "[ CHATS ]", Theme::CYAN, 0x0862);
-    small(t, 96, BAR_Y + 3, "ENTER SENDS   BKSP DELETES", dim(Theme::WHITE, 110), 0x0862);
+    small(t, 96, BAR_Y + 3, "ENTER SENDS", dim(Theme::WHITE, 110), 0x0862);
+}
+
+// The switch: which network Enter sends to. Twice the compose line's height
+// (asked for 2026-10-15), so it reaches down over the bar's empty right end
+// rather than taking a line from the chats; drawn after the bar for that.
+void drawSwitch(TFT_eSPI& t) {
+    const uint16_t accent = s_net ? Theme::PINK : Theme::CYAN;
+    s_switchX = 240; s_switchW = 76;
+    const int h = COMPOSE_H * 2;
+    t.fillRoundRect(s_switchX, COMPOSE_Y, s_switchW, h, 3, dim(accent, 40));
+    t.drawRoundRect(s_switchX, COMPOSE_Y, s_switchW, h, 3, accent);
+    const char* lab = s_net ? "> MESHCORE" : "> MESHTASTIC";
+    t.setTextFont(1); t.setTextSize(1);
+    small(t, s_switchX + (s_switchW - t.textWidth(lab)) / 2, COMPOSE_Y + (h - 8) / 2, lab, accent, dim(accent, 40));
 }
 
 }  // namespace
@@ -745,14 +754,17 @@ void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
     drawChats(t, now);
     drawCompose(t, now);
     drawBar(t);
+    drawSwitch(t);
 }
 
 LoraHomeHit uiLoraHomeHit(TFT_eSPI& t, int x, int y) {
     // BACK is the top-right corner, with a finger's worth of slack; the bar's
     // right half does nothing, so a slip below the switch goes nowhere.
     if (y < 14 && x >= t.width() - 80) return LoraHomeHit::BACK;
+    // The switch, all of its double height and a little round it.
+    if (y >= COMPOSE_Y - 2 && x >= s_switchX - 6) return LoraHomeHit::SWITCH;
     if (y >= BAR_Y - 4) return x < 80 ? LoraHomeHit::CHATS : LoraHomeHit::NONE;
-    if (y >= COMPOSE_Y - 2 && y < BAR_Y + 4) return x >= s_switchX - 6 ? LoraHomeHit::SWITCH : LoraHomeHit::NONE;
+    if (y >= COMPOSE_Y - 2) return LoraHomeHit::NONE;
     if (y >= CHAT_Y - 2 && y < COMPOSE_Y - 2) return x < t.width() / 2 ? LoraHomeHit::CHAT_MESHTASTIC : LoraHomeHit::CHAT_MESHCORE;
     return LoraHomeHit::NONE;
 }
