@@ -8865,6 +8865,8 @@ void loop() {
                         case LoraHomeHit::CHAT_MESHTASTIC: uiLoraChatSelect(0); enterLoraChat(); break;
                         case LoraHomeHit::CHAT_MESHCORE:   uiLoraChatSelect(1); enterLoraChat(); break;
                         case LoraHomeHit::SWITCH:          uiLoraHomeToggleNet(); break;
+                        case LoraHomeHit::TAB_MESHTASTIC:  uiLoraHomeSetNet(0); break;
+                        case LoraHomeHit::TAB_MESHCORE:    uiLoraHomeSetNet(1); break;
                         default: break;
                     }
                 }

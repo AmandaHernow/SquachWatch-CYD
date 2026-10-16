@@ -1,8 +1,9 @@
 // SquachWatch-CYD — LORA, the T-Deck's landing page. See include/ui_lorahome.h.
 //
-// Laid out for 320x240 exactly, the lab's pixels: the dish in a 104-wide
-// column on the left, the tiles, strip and waterfall in the 210 to its right,
-// the two chats from 134 down, the compose line at 213, the bar at 226.
+// Laid out for 320x240 exactly: the dish in a 104-wide column on the left,
+// the tiles and the strip in the 210 to its right, one info line at 109,
+// the tabbed chat window from 120 down, the compose line at 213, the bar at
+// 226.
 #if SQUACH_LORA && defined(TDECK_PLUS)
 #include "ui_lorahome.h"
 #include "ui_lorachat.h"
@@ -28,8 +29,12 @@ const int DISH_CX = 58, DISH_CY = 66, DISH_R = 40;
 const int COL_X = 108, COL_W = 210;            // the right column
 const int TILE_Y = 26, TILE_H = 30, TILE_W = 50, TILE_GAP = 3;
 const int STRIP_Y = 59, STRIP_H = 46;
-const int WF_Y = 107, WF_H = 20;
-const int CHAT_Y = 134, CHAT_BOTTOM = 212, CHAT_ROW_H = 12;
+// The waterfall came out on 2026-10-16 (the owner: too busy, and the chats
+// need the room). One line under the dish, then one chat window, full
+// width, tabbed by network, down to the compose line.
+const int INFO_Y = 109;
+const int CHAT_Y = 120, CHAT_TAB_H = 14, CHAT_BOTTOM = 212, CHAT_ROW_H = 12;
+const int CHAT_ROWS_Y = CHAT_Y + CHAT_TAB_H + 2;
 const int COMPOSE_Y = 213, COMPOSE_H = 12;
 const int BAR_Y = 226;
 
@@ -161,7 +166,7 @@ void refreshSnapshot(uint32_t now, bool force) {
         auto& keep = s_ps->keepTmp;
         uint8_t kept[2] = { 0, 0 };
         uint16_t count[2] = { 0, 0 };
-        const int lines = (CHAT_BOTTOM - (CHAT_Y + 15)) / CHAT_ROW_H;
+        const int lines = (CHAT_BOTTOM - CHAT_ROWS_Y) / CHAT_ROW_H;
         const uint16_t n = Lora::msgCount();
         Lora::Msgs::Msg m;
         bool ok = true;
@@ -223,43 +228,34 @@ void drawTiles(TFT_eSPI& t, const Numbers& n) {
     }
 }
 
-// ---- the strip and the waterfall ------------------------------------------------
-// Both read the same two rings: the noise samples (one a second, 80 of them)
-// and the packet hits (when, how loud, which network). The strip is the
-// noise and the hits as spikes; the waterfall is the same seconds as colour.
+// ---- the strip ------------------------------------------------------------------
+// It reads two rings: the noise samples (one a second, 80 of them) and the
+// packet hits (when, how loud, which network): the noise as a line, the hits
+// as spikes. (A waterfall under it showed the same seconds as colour until
+// 2026-10-16, when it made way for the chats.)
 //
-// And three things to keep them alive on a quiet hill, from the Quiet Air
-// Lab (2026-10-15) and the owner's notes on the first go:
+// And three things to keep it alive on a quiet hill, from the Quiet Air Lab
+// (2026-10-15) and the owner's notes on the first go:
 //   PHOSPHOR  the noise is a solid line edge to edge, and a meteor sweeps it
 //             from the left: a white-hot head, a tail fading into an
-//             afterglow layer, sparks thrown off behind it. The waterfall's
-//             cells hold heat that cools instead of snapping off. Real data,
-//             slow glass, a little showing off.
-//   SPARKLE   the waterfall is always a twinkling field in the owner's own
-//             theme colours, drifting leftward, with the packets' heat drawn
-//             over it; a few sparks behind the strip when it is quiet.
-//             Decoration, kept dim enough that a packet always wins.
+//             afterglow layer, sparks thrown off behind it. Real data, slow
+//             glass, a little showing off.
+//   SPARKLE   a few twinkles in the theme's own colours behind the strip
+//             when it is quiet. Decoration, kept dim enough that a packet
+//             always wins.
 //   GHOST     the newest packet keeps echoing: its spike repeats fainter for
-//             two minutes, and its own bytes rain down the waterfall. Real.
+//             two minutes. Real.
 const uint32_t QUIET_MS = 8000, GHOST_MS = 120000;
 const int GLOW_W = 208, GLOW_H = 44;              // inside the strip's border
-const int WF_COLS = 52, WF_ROWS = 10, WF_CW = 4, WF_CH = 2;
-const uint32_t WF_COL_MS = 1540;                  // 52 columns, 80 seconds
 
 uint8_t* s_glow = nullptr;                        // PHOSPHOR afterglow, PSRAM
-float    s_heat[WF_COLS][WF_ROWS];                // waterfall heat, 0..~1.5
-uint8_t  s_kind[WF_COLS][WF_ROWS];                // 0 noise, 1 Meshtastic, 2 MeshCore, 3 other
-uint32_t s_lastFrame = 0, s_colAt = 0, s_hitSeen = 0, s_openedAt = 0;
+uint32_t s_lastFrame = 0, s_openedAt = 0;
 uint16_t s_beamIdx = 0;
 
 int yForDbm(int16_t dbm, int top, int h) {
     // -120 at the bottom, -40 at the top.
     int v = 120 + dbm; if (v < 0) v = 0; if (v > 80) v = 80;
     return top + h - 3 - (v * (h - 6)) / 80;
-}
-int wfRow(int16_t dbm) {
-    int v = 120 + dbm; if (v < 0) v = 0; if (v > 79) v = 79;
-    return WF_ROWS - 1 - (v * WF_ROWS) / 80;
 }
 uint8_t kindOf(Lora::Proto p) { return p == Lora::Proto::MESHTASTIC ? 1 : p == Lora::Proto::MESHCORE ? 2 : 3; }
 uint16_t kindCol(uint8_t k) { return k == 1 ? Theme::CYAN : k == 2 ? Theme::PINK : Theme::PURPLE; }
@@ -275,40 +271,6 @@ uint32_t lastPacketMs(const Lora::Hit* hits, uint8_t hn) {
     return last ? last : s_openedAt;
 }
 
-// A deposit of heat in the newest column, for a packet: hot at its row, and
-// a cooler tail below it, the way the old waterfall drew its glow.
-void heatPacket(int col, int16_t rssi, Lora::Proto p) {
-    const int row = wfRow(rssi);
-    const uint8_t k = kindOf(p);
-    s_heat[col][row] = 1.5f; s_kind[col][row] = k;
-    for (int r = row + 1; r < WF_ROWS; r++) {
-        const float h = 0.55f / (float)(r - row);
-        if (h > s_heat[col][r]) { s_heat[col][r] = h; s_kind[col][r] = k; }
-    }
-}
-
-// The page opening: heat laid down from what the rings already hold, aged,
-// so the waterfall opens with the last 80 seconds in it rather than empty.
-void heatPrefill(uint32_t now) {
-    memset(s_heat, 0, sizeof s_heat); memset(s_kind, 0, sizeof s_kind);
-    int8_t trail[Lora::TRAIL_CAP];
-    const uint16_t tn = Lora::rssiTrail(trail, Lora::TRAIL_CAP);
-    for (uint16_t i = 0; i < tn; i++) {
-        const uint32_t ago = (uint32_t)(tn - 1 - i) * 1000;
-        const int col = WF_COLS - 1 - (int)(ago / WF_COL_MS);
-        if (col < 0) continue;
-        s_heat[col][wfRow(trail[i])] = 0.6f * expf(-(float)ago / 3000.0f) + 0.08f;
-    }
-    const Lora::Hit* hits = s_pHits;
-    const uint8_t hn = s_pHitN;
-    for (uint8_t i = 0; i < hn; i++) {
-        const uint32_t ago = now - hits[i].ms;
-        if (ago > 80000) continue;
-        heatPacket(WF_COLS - 1 - (int)(ago / WF_COL_MS), hits[i].rssi, hits[i].proto);
-        if ((int32_t)(hits[i].ms - s_hitSeen) > 0) s_hitSeen = hits[i].ms;
-    }
-    s_colAt = now;
-}
 
 // A ramp through the theme's own accent colours, so the field follows the
 // owner's palette (Settings > APPEARANCE): u 0..1 round the loop, at
@@ -339,16 +301,16 @@ float sparkleLevel(uint32_t quiet) { return quiet > QUIET_MS ? fminf(1.0f, (quie
 //              phosphor line; the meteor and the spikes stay in front. (It
 //              fell through the waterfall too until 2026-10-16, when the
 //              owner took it out of there.)
-//   CHAT RAIN  a dim rain inside each message box in that network's colour,
-//              cyan behind Meshtastic and pink behind MeshCore, under the
-//              lines. (A backdrop through the page's background came out the
-//              same day: the owner wanted it in the boxes, not around them.)
+//   CHAT RAIN  a dim rain inside the chat window in the open tab's colour,
+//              cyan for Meshtastic and pink for MeshCore, under the lines.
+//              (A backdrop through the page's background came out the same
+//              day: the owner wanted it in the boxes, not around them.)
 const char RAIN_GLYPHS[] = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*<>{}[]/\\|+=~SASQUACH";
 const int  RAIN_GN = sizeof(RAIN_GLYPHS) - 1;
 const float CODE_STRIP_A = 0.25f, CHAT_RAIN_A = 0.3f;
 struct RainCol { float y, v; uint8_t len, depth; bool active; char g[16]; };
 struct Rain { RainCol c[54]; uint8_t n; int16_t x0, spacing, top, h; float density; uint32_t seed; bool ready; };
-Rain s_code = {}, s_chatMt = {}, s_chatMc = {};
+Rain s_code = {}, s_chatRain = {};
 
 float rainRand(Rain& R) { R.seed = R.seed * 1664525u + 1013904223u; return (R.seed >> 8) / 16777216.0f; }
 char  rainGlyph(Rain& R) { return RAIN_GLYPHS[(int)(rainRand(R) * RAIN_GN) % RAIN_GN]; }
@@ -558,79 +520,6 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     // reading, and the numbers that matter are in the tiles above.
 }
 
-void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
-    const int x0 = COL_X + 1;
-    t.fillRect(COL_X, WF_Y, COL_W, WF_H, 0x0000);
-    const Lora::Hit* hits = s_pHits;
-    const uint8_t hn = s_pHitN;
-    const uint32_t quiet = now - lastPacketMs(hits, hn);
-
-    // PHOSPHOR heat: a new column every 1.54 s takes the newest noise sample;
-    // a new packet heats the newest column; everything cools.
-    while (now - s_colAt >= WF_COL_MS) {
-        s_colAt += WF_COL_MS;
-        memmove(&s_heat[0][0], &s_heat[1][0], sizeof(float) * WF_ROWS * (WF_COLS - 1));
-        memmove(&s_kind[0][0], &s_kind[1][0], WF_ROWS * (WF_COLS - 1));
-        for (int r = 0; r < WF_ROWS; r++) { s_heat[WF_COLS - 1][r] = 0; s_kind[WF_COLS - 1][r] = 0; }
-        int8_t trail[Lora::TRAIL_CAP];
-        const uint16_t tn = Lora::rssiTrail(trail, Lora::TRAIL_CAP);
-        if (tn) s_heat[WF_COLS - 1][wfRow(trail[tn - 1])] = 0.6f;
-    }
-    for (uint8_t i = 0; i < hn; i++) if ((int32_t)(hits[i].ms - s_hitSeen) > 0) {
-        s_hitSeen = hits[i].ms;
-        heatPacket(WF_COLS - 1, hits[i].rssi, hits[i].proto);
-    }
-    // Noise cools in about three seconds, packets in about twelve.
-    const float coolN = expf(-(float)dt / 3000.0f), coolP = expf(-(float)dt / 12000.0f);
-    for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) s_heat[c][r] *= s_kind[c][r] ? coolP : coolN;
-
-    // SPARKLE, behind the heat, all the time (asked for 2026-10-15): a
-    // twinkling field in the theme's own colours, drifting leftward at the
-    // waterfall's pace. Each cell twinkles on its own steady rhythm; about
-    // one in four is lit at any moment. A little brighter when it is quiet.
-    const float spk = 0.6f + 0.4f * sparkleLevel(quiet);
-    {
-        const uint32_t shift = now / 400;                // a column every 0.4 s
-        for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) {
-            const uint32_t h = mix32((uint32_t)(c + shift) * 73856093u ^ (uint32_t)r * 19349663u);
-            if ((h & 3) != 0) continue;
-            const float tw = sinf(now * (0.0015f + (h >> 4 & 7) * 0.0005f) + (float)(h >> 8 & 255) * 0.0246f) * 0.5f + 0.5f;
-            const float a = (0.12f + 0.88f * tw * tw * tw) * spk * 0.85f;
-            const float u = (float)c / WF_COLS + r * 0.035f + now / 9000.0f;
-            t.fillRect(x0 + c * WF_CW, WF_Y + r * WF_CH, WF_CW - 1, WF_CH, themeRamp(u, a));
-        }
-    }
-
-
-    // The heat itself: warm amber for the noise, the network's colour for a
-    // packet, both fading as they cool.
-    for (int c = 0; c < WF_COLS; c++) for (int r = 0; r < WF_ROWS; r++) {
-        const float h = s_heat[c][r];
-        if (h < 0.03f) continue;
-        const uint16_t col = s_kind[c][r] ? scale565(kindCol(s_kind[c][r]), fminf(1.0f, h))
-                                          : scale565(0xFC80, fminf(1.0f, h * 0.8f));
-        t.fillRect(x0 + c * WF_CW, WF_Y + r * WF_CH, WF_CW - 1, WF_CH, col);
-    }
-
-    // GHOST: the newest packet's own bytes, raining slowly, brighter for
-    // bigger values, fading over two minutes.
-    if (s_pHavePkt) {
-        const Lora::Packet& pk = s_ps->pkt;
-        const uint32_t ago = now - pk.ms;
-        if (ago < GHOST_MS) {
-            const float fade = fmaxf(0.08f, 1.0f - (float)ago / GHOST_MS);
-            const uint16_t c = kindCol(kindOf(pk.proto));
-            const uint8_t n = pk.len < 60 ? pk.len : 60;
-            for (uint8_t i = 0; i < n; i++) {
-                const int x = x0 + ((i * 37) % WF_COLS) * WF_CW;
-                const int yy = (int)fmodf(ago * 0.004f + i * 7, (float)(WF_H + 8)) - 4;
-                if (yy < 0 || yy >= WF_H - 1) continue;
-                t.fillRect(x, WF_Y + yy, 3, 2, scale565(c, (0.15f + 0.6f * pk.data[i] / 255.0f) * fade));
-            }
-        }
-    }
-    t.drawRect(COL_X, WF_Y, COL_W, WF_H, 0x2946);
-}
 
 // ---- the dish ------------------------------------------------------------------
 struct Blip { float x, y; bool known, direct; Lora::Proto proto; float miles; const char* tag; float bearing; };
@@ -774,101 +663,94 @@ void drawDish(TFT_eSPI& t, uint32_t now) {
     t.fillCircle(cx, cy, 2, Theme::WHITE);
     small(t, cx - 3, cy - R - 9, "N", dim(Theme::WHITE, 110));
     small(t, cx - R + 2, cy + R - 8, "10mi", dim(Theme::WHITE, 110), 0x0041);
-    // Under the dish, three lines. The GPS's own state first, in words: the
-    // legend used to end "NO POS", which meant "a rim dot sent no position"
-    // and read as "your GPS has no position" (a tester, 2026-10-15).
+    // Under the dish, one line across the page now the waterfall is gone:
+    // the GPS's own state in words (the legend once ended "NO POS" and a
+    // tester read it as his own fix, 2026-10-15), the nearest node that has
+    // said where it is, and the key.
     {
         char g[24];
         uint16_t gc;
-        if (haveFix)                 { snprintf(g, sizeof g, "GPS FIX %u SATS", (unsigned)fix.used); gc = Theme::GREEN; }
+        if (haveFix)                 { snprintf(g, sizeof g, "GPS %u SATS", (unsigned)fix.used); gc = Theme::GREEN; }
         else if (Gnss::good() > 0)   { snprintf(g, sizeof g, "GPS SEARCHING"); gc = Theme::AMBER; }
         else                         { snprintf(g, sizeof g, "GPS NOT HEARD"); gc = dim(Theme::WHITE, 150); }
-        smallClip(t, 4, cy + R + 3, g, gc, 100);
+        smallClip(t, 4, INFO_Y, g, gc, 84);
     }
-    // Then the nearest node that has said where it is, or why there is none.
     if (nb && blips[order[0]].known) {
         const Blip& b = blips[order[0]];
-        char pv[24], line[28];
+        char pv[24], line[32];
         const char* nm = Privacy::name(b.tag, pv, sizeof pv);
-        if (b.miles < 10) snprintf(line, sizeof line, "%s %u.%umi %s", nm, (unsigned)b.miles, (unsigned)(b.miles * 10) % 10, compass(b.bearing));
-        else              snprintf(line, sizeof line, "%s %umi %s", nm, (unsigned)b.miles, compass(b.bearing));
-        smallClip(t, 4, cy + R + 12, line, netCol(b.proto), 100);
-    } else if (nb) {
+        if (b.miles < 10) snprintf(line, sizeof line, "NEAR %s %u.%umi %s", nm, (unsigned)b.miles, (unsigned)(b.miles * 10) % 10, compass(b.bearing));
+        else              snprintf(line, sizeof line, "NEAR %s %umi %s", nm, (unsigned)b.miles, compass(b.bearing));
+        smallClip(t, 92, INFO_Y, line, netCol(b.proto), 132);
+    } else {
         // Heard, but none has sent a position yet (Meshtastic's default is one
         // every 15-30 min, and many owners turn it off), or no fix to place them.
-        smallClip(t, 4, cy + R + 12, haveFix ? "NO NODE POS YET" : "NEEDS A GPS FIX", dim(Theme::WHITE, 150), 100);
-    } else {
-        small(t, 4, cy + R + 12, "NOBODY HEARD YET", dim(Theme::WHITE, 150));
+        smallClip(t, 92, INFO_Y, !nb ? "NOBODY HEARD YET" : haveFix ? "NO NODE POS YET" : "NEEDS A GPS FIX", dim(Theme::WHITE, 150), 132);
     }
-    // And the key: filled heard direct, hollow through relays. A rim dot is a
-    // node with no position; the line above says when that is all of them.
-    t.fillCircle(7, cy + R + 25, 1, Theme::WHITE);   small(t, 11, cy + R + 21, "DIRECT", dim(Theme::WHITE, 150));
-    t.drawCircle(56, cy + R + 25, 2, Theme::WHITE);  small(t, 61, cy + R + 21, "RELAY", dim(Theme::WHITE, 150));
+    // The key: filled heard direct, hollow through relays.
+    t.fillCircle(232, INFO_Y + 3, 1, Theme::WHITE);  small(t, 236, INFO_Y, "DIRECT", dim(Theme::WHITE, 150));
+    t.drawCircle(279, INFO_Y + 3, 2, Theme::WHITE);  small(t, 284, INFO_Y, "RELAY", dim(Theme::WHITE, 150));
 }
 
 // ---- the chats -------------------------------------------------------------------
-// CHAT RAIN: inside each message box, under its lines, clipped to the box.
+// CHAT RAIN: inside the window, under its lines, in the open tab's colour.
 void drawChatRain(TFT_eSPI& t) {
     t.setTextFont(1); t.setTextSize(1);
-    const int top = CHAT_Y + 14, h = CHAT_BOTTOM - CHAT_Y - 15;
-    t.setViewport(5, top, 152, h, false);
-    rainDraw(t, s_chatMt, CHAT_RAIN_A, [](int, int) { return true; }, [](const RainCol&, int) { return Theme::CYAN; });
-    t.resetViewport();
-    t.setViewport(163, top, 152, h, false);
-    rainDraw(t, s_chatMc, CHAT_RAIN_A, [](int, int) { return true; }, [](const RainCol&, int) { return Theme::PINK; });
+    t.setViewport(5, CHAT_ROWS_Y, 310, CHAT_BOTTOM - CHAT_ROWS_Y - 1, false);
+    const uint16_t c = s_net ? Theme::PINK : Theme::CYAN;
+    rainDraw(t, s_chatRain, CHAT_RAIN_A, [](int, int) { return true; }, [c](const RainCol&, int) { return c; });
     t.resetViewport();
 }
 
+// The window: a tab per network along the top (the open one filled, each
+// with its count), then the open network's newest lines, newest first. The
+// open tab is the network the compose line sends to: one switch for both.
 void drawChats(TFT_eSPI& t, uint32_t now) {
-    const int colW = 154;
-    const int xs[2] = { 4, 162 };
+    if (!s_ps) return;
     const uint16_t cols[2] = { Theme::CYAN, Theme::PINK };
     const char* names[2] = { "MESHTASTIC", "MESHCORE" };
-    // The page's own copy, refreshed twice a second (see refreshSnapshot).
-    const uint16_t* count = s_pCount;
-    if (!s_ps) return;
-    auto& keep = s_ps->keep;
-    const uint8_t* kept = s_pKept;
+    const uint8_t c = s_net;
+    t.drawRect(4, CHAT_Y, 312, CHAT_BOTTOM - CHAT_Y, dim(cols[c], 110));
+    t.setTextFont(1); t.setTextSize(1);
+    for (int k = 0; k < 2; k++) {
+        const int x0 = k ? 160 : 4, w = 156;
+        const bool on = k == c;
+        if (on) t.fillRect(x0 + 1, CHAT_Y + 1, w - 2, CHAT_TAB_H - 1, dim(cols[k], 60));
+        else    t.fillRect(x0 + 1, CHAT_Y + 1, w - 2, CHAT_TAB_H - 1, dim(cols[k], 14));
+        char lab[24];
+        snprintf(lab, sizeof lab, "%s %u", names[k], (unsigned)s_pCount[k]);
+        small(t, x0 + (w - t.textWidth(lab)) / 2, CHAT_Y + 4, lab, on ? Theme::WHITE : dim(cols[k], 150), on ? dim(cols[k], 60) : dim(cols[k], 14));
+    }
+    t.drawFastHLine(5, CHAT_Y + CHAT_TAB_H, 310, dim(cols[c], 110));
+    t.drawFastVLine(160, CHAT_Y + 1, CHAT_TAB_H - 1, dim(Theme::WHITE, 40));
+    // Something unread: a small badge at the far end of the tabs.
     const uint16_t unread = uiLoraChatUnread();
-    for (int c = 0; c < 2; c++) {
-        const int x = xs[c];
-        t.fillRect(x + 1, CHAT_Y + 1, colW - 2, 12, dim(cols[c], 36));
-        t.drawRect(x, CHAT_Y, colW, CHAT_BOTTOM - CHAT_Y, dim(cols[c], 110));
-        small(t, x + 4, CHAT_Y + 3, names[c], cols[c], dim(cols[c], 36));
-        char badge[12];
-        if (c == 0 && unread) {
-            snprintf(badge, sizeof badge, "%u NEW", (unsigned)unread);
-            t.setTextFont(1); t.setTextSize(1);
-            const int bw = t.textWidth(badge) + 6;
-            t.fillRect(x + colW - 3 - bw, CHAT_Y + 2, bw, 10, cols[c]);
-            small(t, x + colW - bw, CHAT_Y + 3, badge, Theme::BLACK, cols[c]);
-        } else {
-            snprintf(badge, sizeof badge, "%u", (unsigned)count[c]);
-            t.setTextFont(1); t.setTextSize(1);
-            small(t, x + colW - 4 - t.textWidth(badge), CHAT_Y + 3, badge, cols[c], dim(cols[c], 36));
-        }
-        if (!kept[c]) {
-            small(t, x + 4, CHAT_Y + 18, "nothing yet", dim(Theme::WHITE, 120));
-            continue;
-        }
-        for (uint8_t i = 0; i < kept[c]; i++) {
-            const Lora::Msgs::Msg& r = keep[c][i];
-            const int y = CHAT_Y + 15 + i * CHAT_ROW_H;
-            if (i == 0) t.fillRect(x + 1, y - 1, colW - 2, CHAT_ROW_H, dim(cols[c], 22));
-            char pv[24], ago[8];
-            const char* who = Privacy::name(r.sender[0] ? r.sender : "?", pv, sizeof pv);
-            age(now, r.ms, ago, sizeof ago);
-            t.setTextFont(1); t.setTextSize(1);
-            const uint16_t bg = i == 0 ? dim(cols[c], 22) : Theme::BG;
-            t.setTextColor(cols[c], bg); t.setCursor(x + 4, y + 1); t.print(who);
-            const int tx = t.getCursorX() + 4;
-            const int agoW = t.textWidth(ago);
-            char text[48]; snprintf(text, sizeof text, "%s", r.text);
-            size_t tn = strlen(text);
-            while (tn && tx + t.textWidth(text) > x + colW - 8 - agoW) text[--tn] = '\0';
-            t.setTextColor(Theme::WHITE, bg); t.setCursor(tx, y + 1); t.print(text);
-            t.setTextColor(dim(Theme::WHITE, 110), bg); t.setCursor(x + colW - 4 - agoW, y + 1); t.print(ago);
-        }
+    if (unread) {
+        char badge[12]; snprintf(badge, sizeof badge, "%u NEW", (unsigned)unread);
+        const int bw = t.textWidth(badge) + 6;
+        t.fillRect(316 - 3 - bw, CHAT_Y + 2, bw, 10, Theme::VAPOR_YELLOW);
+        small(t, 316 - bw, CHAT_Y + 3, badge, Theme::BLACK, Theme::VAPOR_YELLOW);
+    }
+    if (!s_pKept[c]) {
+        small(t, 10, CHAT_ROWS_Y + 4, c ? "no MeshCore messages yet" : "no Meshtastic messages yet", dim(Theme::WHITE, 120));
+        return;
+    }
+    for (uint8_t i = 0; i < s_pKept[c]; i++) {
+        const Lora::Msgs::Msg& r = s_ps->keep[c][i];
+        const int y = CHAT_ROWS_Y + i * CHAT_ROW_H;
+        if (i == 0) t.fillRect(5, y - 1, 310, CHAT_ROW_H, dim(cols[c], 22));
+        char pv[24], ago[8];
+        const char* who = Privacy::name(r.sender[0] ? r.sender : "?", pv, sizeof pv);
+        age(now, r.ms, ago, sizeof ago);
+        const uint16_t bg = i == 0 ? dim(cols[c], 22) : Theme::BG;
+        t.setTextColor(cols[c], bg); t.setCursor(8, y + 1); t.print(who);
+        const int tx = t.getCursorX() + 6;
+        const int agoW = t.textWidth(ago);
+        char text[64]; snprintf(text, sizeof text, "%s", r.text);
+        size_t tn = strlen(text);
+        while (tn && tx + t.textWidth(text) > 316 - 8 - agoW) text[--tn] = '\0';
+        t.setTextColor(Theme::WHITE, bg); t.setCursor(tx, y + 1); t.print(text);
+        t.setTextColor(dim(Theme::WHITE, 110), bg); t.setCursor(316 - 4 - agoW, y + 1); t.print(ago);
     }
 }
 
@@ -925,10 +807,11 @@ void uiLoraHomeInit(TFT_eSPI& t) {
     s_lastFrame = 0;
     refreshSnapshot(s_openedAt, true);
     s_beamIdx = 0;
-    heatPrefill(s_openedAt);
+
 }
 
 void uiLoraHomeToggleNet() { s_net = (uint8_t)(s_net ? 0 : 1); }
+void uiLoraHomeSetNet(uint8_t net) { s_net = net ? 1 : 0; }
 uint8_t uiLoraHomeNet() { return s_net; }
 
 void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
@@ -936,21 +819,18 @@ void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
     const uint32_t dt = s_lastFrame ? (now - s_lastFrame > 200 ? 200 : now - s_lastFrame) : 16;
     s_lastFrame = now;
-    // The rain: CODE FALL down the instruments, and a CHAT RAIN in each
-    // message box; each is drawn inside its own box, clipped.
+    // The rain: CODE FALL behind the strip, and a CHAT RAIN in the chat
+    // window; each is drawn inside its own box, clipped.
     if (!s_code.ready)   rainInit(s_code, COL_X + 2, COL_X + COL_W - 4, 6, STRIP_Y, STRIP_H, 0.7f, 0xC0DE);
-    if (!s_chatMt.ready) rainInit(s_chatMt, 7, 155, 6, CHAT_Y + 14, CHAT_BOTTOM - CHAT_Y - 14, 0.5f, 0xCA75);
-    if (!s_chatMc.ready) rainInit(s_chatMc, 165, 313, 6, CHAT_Y + 14, CHAT_BOTTOM - CHAT_Y - 14, 0.5f, 0x7C0E);
+    if (!s_chatRain.ready) rainInit(s_chatRain, 7, 313, 6, CHAT_ROWS_Y, CHAT_BOTTOM - CHAT_ROWS_Y, 0.5f, 0xCA75);
     rainStep(s_code, dt, 0.45f);
-    rainStep(s_chatMt, dt, 0.4f);
-    rainStep(s_chatMc, dt, 0.4f);
+    rainStep(s_chatRain, dt, 0.4f);
     const Numbers n = numbers(now);
     drawHeader(t, now);
     drawTiles(t, n);
     drawStrip(t, now, n, dt);
-    drawWaterfall(t, now, dt);
     drawDish(t, now);
-    scanlines(t, COL_X, STRIP_Y, COL_W, WF_Y + WF_H - STRIP_Y);
+    scanlines(t, COL_X, STRIP_Y, COL_W, STRIP_H);
     scanlines(t, DISH_CX - DISH_R, DISH_CY - DISH_R, 2 * DISH_R + 1, 2 * DISH_R + 1);
     drawChatRain(t);
     drawChats(t, now);
@@ -967,7 +847,8 @@ LoraHomeHit uiLoraHomeHit(TFT_eSPI& t, int x, int y) {
     if (y >= COMPOSE_Y - 2 && x >= s_switchX - 6) return LoraHomeHit::SWITCH;
     if (y >= BAR_Y - 4) return x < 80 ? LoraHomeHit::CHATS : LoraHomeHit::NONE;
     if (y >= COMPOSE_Y - 2) return LoraHomeHit::NONE;
-    if (y >= CHAT_Y - 2 && y < COMPOSE_Y - 2) return x < t.width() / 2 ? LoraHomeHit::CHAT_MESHTASTIC : LoraHomeHit::CHAT_MESHCORE;
+    if (y >= CHAT_Y - 2 && y < CHAT_Y + CHAT_TAB_H + 2) return x < 160 ? LoraHomeHit::TAB_MESHTASTIC : LoraHomeHit::TAB_MESHCORE;
+    if (y >= CHAT_Y + CHAT_TAB_H + 2 && y < COMPOSE_Y - 2) return s_net ? LoraHomeHit::CHAT_MESHCORE : LoraHomeHit::CHAT_MESHTASTIC;
     return LoraHomeHit::NONE;
 }
 
