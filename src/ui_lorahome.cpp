@@ -275,20 +275,20 @@ float sparkleLevel(uint32_t quiet) { return quiet > QUIET_MS ? fminf(1.0f, (quie
 // ---- the rain (the Rain Lab's picks, 2026-10-15) -----------------------------------
 // The DIGITAL background's rain, brought in quietly, the same way it draws:
 // ASCII from the 6x8 font, a white-hot head, a trail that fades.
-//   BACKDROP   through the page's own background only -- the gaps round the
-//              dish, the header, the margins -- in the rain's depth colours,
-//              with a clear halo kept round the dish and the chats so nothing
-//              next to text is busy. Everything else is drawn over it.
 //   CODE FALL  glyph columns falling through the waterfall in the theme's
 //              colours, and fainter behind the strip's phosphor line, so code
 //              falls from the top of the instruments to the bottom. The
 //              meteor, the spikes and the packets' heat stay in front.
+//   CHAT RAIN  a dim rain inside each message box in that network's colour,
+//              cyan behind Meshtastic and pink behind MeshCore, under the
+//              lines. (A backdrop through the page's background came out the
+//              same day: the owner wanted it in the boxes, not around them.)
 const char RAIN_GLYPHS[] = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*<>{}[]/\\|+=~SASQUACH";
 const int  RAIN_GN = sizeof(RAIN_GLYPHS) - 1;
-const float BACKDROP_A = 0.5f, CODE_WF_A = 0.65f, CODE_STRIP_A = 0.25f;
+const float CODE_WF_A = 0.65f, CODE_STRIP_A = 0.25f, CHAT_RAIN_A = 0.3f;
 struct RainCol { float y, v; uint8_t len, depth; bool active; char g[16]; };
 struct Rain { RainCol c[54]; uint8_t n; int16_t x0, spacing, top, h; float density; uint32_t seed; bool ready; };
-Rain s_back = {}, s_code = {};
+Rain s_code = {}, s_chatMt = {}, s_chatMc = {};
 
 float rainRand(Rain& R) { R.seed = R.seed * 1664525u + 1013904223u; return (R.seed >> 8) / 16777216.0f; }
 char  rainGlyph(Rain& R) { return RAIN_GLYPHS[(int)(rainRand(R) * RAIN_GN) % RAIN_GN]; }
@@ -327,7 +327,8 @@ void rainStep(Rain& R, uint32_t dt, float speed) {
 }
 
 // Draw the columns. `ok` says whether a glyph's 6x8 box may be drawn there
-// (the backdrop's holes); `col` is the trail's colour for a column. The
+// (every caller clips with a viewport instead, today); `col` is the trail's
+// colour for a column. The
 // glyph is drawn with a transparent background, so only its pixels land.
 template <typename OK, typename COL>
 void rainDraw(TFT_eSPI& t, Rain& R, float alpha, OK ok, COL col) {
@@ -348,18 +349,6 @@ void rainDraw(TFT_eSPI& t, Rain& R, float alpha, OK ok, COL col) {
     }
 }
 
-// The backdrop's holes: the tiles, the instruments, the chats (with a halo),
-// the compose line and the bar, and the dish (with a halo).
-bool backdropOk(int x, int y) {
-    auto hits = [&](int rx, int ry, int rw, int rh) { return x < rx + rw && x + 6 > rx && y < ry + rh && y + 8 > ry; };
-    if (hits(COL_X - 1, TILE_Y - 1, COL_W + 2, WF_Y + WF_H - TILE_Y + 2)) return false;
-    if (hits(1, CHAT_Y - 3, 318, CHAT_BOTTOM - CHAT_Y + 6)) return false;
-    if (y + 8 > COMPOSE_Y - 3) return false;
-    const int nx = x + 3 < DISH_CX ? (x + 5 < DISH_CX ? x + 5 : DISH_CX) : (x > DISH_CX ? x : DISH_CX);
-    const int ny = y + 7 < DISH_CY ? y + 7 : (y > DISH_CY ? y : DISH_CY);
-    const int dx = nx - DISH_CX, dy = ny - DISH_CY, r = DISH_R + 3;
-    return dx * dx + dy * dy > r * r;
-}
 
 void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     const int x0 = COL_X + 1, w = COL_W - 2;
@@ -720,6 +709,18 @@ void drawDish(TFT_eSPI& t, uint32_t now) {
 }
 
 // ---- the chats -------------------------------------------------------------------
+// CHAT RAIN: inside each message box, under its lines, clipped to the box.
+void drawChatRain(TFT_eSPI& t) {
+    t.setTextFont(1); t.setTextSize(1);
+    const int top = CHAT_Y + 14, h = CHAT_BOTTOM - CHAT_Y - 15;
+    t.setViewport(5, top, 152, h, false);
+    rainDraw(t, s_chatMt, CHAT_RAIN_A, [](int, int) { return true; }, [](const RainCol&, int) { return Theme::CYAN; });
+    t.resetViewport();
+    t.setViewport(163, top, 152, h, false);
+    rainDraw(t, s_chatMc, CHAT_RAIN_A, [](int, int) { return true; }, [](const RainCol&, int) { return Theme::PINK; });
+    t.resetViewport();
+}
+
 void drawChats(TFT_eSPI& t, uint32_t now) {
     const int colW = 154;
     const int xs[2] = { 4, 162 };
@@ -844,15 +845,14 @@ void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
     const uint32_t dt = s_lastFrame ? (now - s_lastFrame > 200 ? 200 : now - s_lastFrame) : 16;
     s_lastFrame = now;
-    // The rain: BACKDROP across the whole page (its holes keep it off
-    // everything), CODE FALL down the instruments (drawn inside them).
-    if (!s_back.ready) rainInit(s_back, 0, 320, 6, 0, 240, 0.8f, 0xBACD);
-    if (!s_code.ready) rainInit(s_code, COL_X + 2, COL_X + COL_W - 4, 6, STRIP_Y, WF_Y + WF_H - STRIP_Y, 0.7f, 0xC0DE);
-    rainStep(s_back, dt, 0.8f);
+    // The rain: CODE FALL down the instruments, and a CHAT RAIN in each
+    // message box; each is drawn inside its own box, clipped.
+    if (!s_code.ready)   rainInit(s_code, COL_X + 2, COL_X + COL_W - 4, 6, STRIP_Y, WF_Y + WF_H - STRIP_Y, 0.7f, 0xC0DE);
+    if (!s_chatMt.ready) rainInit(s_chatMt, 7, 155, 6, CHAT_Y + 14, CHAT_BOTTOM - CHAT_Y - 14, 0.5f, 0xCA75);
+    if (!s_chatMc.ready) rainInit(s_chatMc, 165, 313, 6, CHAT_Y + 14, CHAT_BOTTOM - CHAT_Y - 14, 0.5f, 0x7C0E);
     rainStep(s_code, dt, 0.45f);
-    t.setTextFont(1); t.setTextSize(1);
-    const uint16_t depthHue[4] = { Theme::VAPOR_PURPLE, Theme::CYAN, Theme::GREEN, Theme::VAPOR_PINK };
-    rainDraw(t, s_back, BACKDROP_A, backdropOk, [&](const RainCol& c, int) { return depthHue[c.depth & 3]; });
+    rainStep(s_chatMt, dt, 0.4f);
+    rainStep(s_chatMc, dt, 0.4f);
     const Numbers n = numbers(now);
     drawHeader(t, now);
     drawTiles(t, n);
@@ -861,6 +861,7 @@ void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
     drawDish(t, now);
     scanlines(t, COL_X, STRIP_Y, COL_W, WF_Y + WF_H - STRIP_Y);
     scanlines(t, DISH_CX - DISH_R, DISH_CY - DISH_R, 2 * DISH_R + 1, 2 * DISH_R + 1);
+    drawChatRain(t);
     drawChats(t, now);
     drawCompose(t, now);
     drawBar(t);
