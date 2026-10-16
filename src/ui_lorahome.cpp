@@ -272,10 +272,104 @@ uint32_t mix32(uint32_t x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 
 // two-second fade in once it has been quiet for QUIET_MS.
 float sparkleLevel(uint32_t quiet) { return quiet > QUIET_MS ? fminf(1.0f, (quiet - QUIET_MS) / 2000.0f) : 0.0f; }
 
+// ---- the rain (the Rain Lab's picks, 2026-10-15) -----------------------------------
+// The DIGITAL background's rain, brought in quietly, the same way it draws:
+// ASCII from the 6x8 font, a white-hot head, a trail that fades.
+//   BACKDROP   through the page's own background only -- the gaps round the
+//              dish, the header, the margins -- in the rain's depth colours,
+//              with a clear halo kept round the dish and the chats so nothing
+//              next to text is busy. Everything else is drawn over it.
+//   CODE FALL  glyph columns falling through the waterfall in the theme's
+//              colours, and fainter behind the strip's phosphor line, so code
+//              falls from the top of the instruments to the bottom. The
+//              meteor, the spikes and the packets' heat stay in front.
+const char RAIN_GLYPHS[] = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*<>{}[]/\\|+=~SASQUACH";
+const int  RAIN_GN = sizeof(RAIN_GLYPHS) - 1;
+const float BACKDROP_A = 0.5f, CODE_WF_A = 0.65f, CODE_STRIP_A = 0.25f;
+struct RainCol { float y, v; uint8_t len, depth; bool active; char g[16]; };
+struct Rain { RainCol c[54]; uint8_t n; int16_t x0, spacing, top, h; float density; uint32_t seed; bool ready; };
+Rain s_back = {}, s_code = {};
+
+float rainRand(Rain& R) { R.seed = R.seed * 1664525u + 1013904223u; return (R.seed >> 8) / 16777216.0f; }
+char  rainGlyph(Rain& R) { return RAIN_GLYPHS[(int)(rainRand(R) * RAIN_GN) % RAIN_GN]; }
+
+void rainInit(Rain& R, int x0, int x1, int spacing, int top, int h, float density, uint32_t seed) {
+    R.x0 = x0; R.spacing = spacing; R.top = top; R.h = h; R.density = density; R.seed = seed;
+    R.n = (uint8_t)((x1 - x0) / spacing); if (R.n > 54) R.n = 54;
+    for (uint8_t i = 0; i < R.n; i++) {
+        RainCol& c = R.c[i];
+        c.len = (uint8_t)(6 + rainRand(R) * 10);
+        c.y = top + rainRand(R) * (h + c.len * 8);        // already falling when the page opens
+        c.v = 0.025f + rainRand(R) * 0.04f;               // 25-65 px a second
+        c.depth = (uint8_t)(rainRand(R) * 4);
+        c.active = rainRand(R) < density;
+        for (int k = 0; k < 16; k++) c.g[k] = rainGlyph(R);
+    }
+    R.ready = true;
+}
+
+void rainStep(Rain& R, uint32_t dt, float speed) {
+    for (uint8_t i = 0; i < R.n; i++) {
+        RainCol& c = R.c[i];
+        if (!c.active) {
+            if (rainRand(R) < 0.0015f * dt * R.density) { c.active = true; c.y = R.top - 8; }
+            continue;
+        }
+        c.y += c.v * speed * dt;
+        if (rainRand(R) < 0.02f) c.g[(int)(rainRand(R) * 16) & 15] = rainGlyph(R);
+        if (c.y - c.len * 8 > R.top + R.h) {
+            c.y = R.top - 8 - rainRand(R) * 30;
+            c.len = (uint8_t)(6 + rainRand(R) * 10);
+            c.depth = (uint8_t)(rainRand(R) * 4);
+            c.active = rainRand(R) < R.density;
+        }
+    }
+}
+
+// Draw the columns. `ok` says whether a glyph's 6x8 box may be drawn there
+// (the backdrop's holes); `col` is the trail's colour for a column. The
+// glyph is drawn with a transparent background, so only its pixels land.
+template <typename OK, typename COL>
+void rainDraw(TFT_eSPI& t, Rain& R, float alpha, OK ok, COL col) {
+    for (uint8_t i = 0; i < R.n; i++) {
+        const RainCol& c = R.c[i];
+        if (!c.active) continue;
+        const int x = R.x0 + i * R.spacing;
+        const uint16_t trail = col(c, x);
+        for (int k = 0; k < c.len; k++) {
+            const int y = (int)c.y - k * 8;
+            if (y < R.top - 8 || y > R.top + R.h) continue;
+            if (!ok(x, y)) continue;
+            const float a = alpha * (k == 0 ? 1.0f : (1.0f - (float)k / c.len) * 0.75f) * (0.55f + c.depth * 0.15f);
+            if (a < 0.03f) continue;
+            const uint16_t fg = scale565(k == 0 ? Theme::WHITE : trail, a);
+            t.drawChar(x, y, (uint8_t)c.g[k & 15], fg, fg, 1);
+        }
+    }
+}
+
+// The backdrop's holes: the tiles, the instruments, the chats (with a halo),
+// the compose line and the bar, and the dish (with a halo).
+bool backdropOk(int x, int y) {
+    auto hits = [&](int rx, int ry, int rw, int rh) { return x < rx + rw && x + 6 > rx && y < ry + rh && y + 8 > ry; };
+    if (hits(COL_X - 1, TILE_Y - 1, COL_W + 2, WF_Y + WF_H - TILE_Y + 2)) return false;
+    if (hits(1, CHAT_Y - 3, 318, CHAT_BOTTOM - CHAT_Y + 6)) return false;
+    if (y + 8 > COMPOSE_Y - 3) return false;
+    const int nx = x + 3 < DISH_CX ? (x + 5 < DISH_CX ? x + 5 : DISH_CX) : (x > DISH_CX ? x : DISH_CX);
+    const int ny = y + 7 < DISH_CY ? y + 7 : (y > DISH_CY ? y : DISH_CY);
+    const int dx = nx - DISH_CX, dy = ny - DISH_CY, r = DISH_R + 3;
+    return dx * dx + dy * dy > r * r;
+}
+
 void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     const int x0 = COL_X + 1, w = COL_W - 2;
     t.fillRect(COL_X, STRIP_Y, COL_W, STRIP_H, 0x0000);
     for (int g = 1; g < 4; g++) t.drawFastHLine(x0, STRIP_Y + g * STRIP_H / 4, w, 0x0841);
+    // CODE FALL, faint, behind the phosphor line: clipped to the strip.
+    t.setViewport(x0, STRIP_Y + 1, w, STRIP_H - 2, false);
+    rainDraw(t, s_code, CODE_STRIP_A, [](int, int) { return true; },
+             [&](const RainCol&, int x) { return themeRamp((float)(x - COL_X) / COL_W + now / 9000.0f, 1.0f); });
+    t.resetViewport();
     Lora::Hit hits[Lora::HIT_CAP];
     const uint8_t hn = Lora::hitTrail(hits, Lora::HIT_CAP);
     const uint32_t quiet = now - lastPacketMs(hits, hn);
@@ -457,6 +551,13 @@ void drawWaterfall(TFT_eSPI& t, uint32_t now, uint32_t dt) {
             t.fillRect(x0 + c * WF_CW, WF_Y + r * WF_CH, WF_CW - 1, WF_CH, themeRamp(u, a));
         }
     }
+
+    // CODE FALL, in the waterfall's own rows, over the twinkle and under the
+    // heat, so the packets still burn over it.
+    t.setViewport(x0, WF_Y, COL_W - 2, WF_H, false);
+    rainDraw(t, s_code, CODE_WF_A, [](int, int) { return true; },
+             [&](const RainCol&, int x) { return themeRamp((float)(x - COL_X) / COL_W + now / 9000.0f, 1.0f); });
+    t.resetViewport();
 
     // The heat itself: warm amber for the noise, the network's colour for a
     // packet, both fading as they cool.
@@ -741,11 +842,20 @@ uint8_t uiLoraHomeNet() { return s_net; }
 
 void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
+    const uint32_t dt = s_lastFrame ? (now - s_lastFrame > 200 ? 200 : now - s_lastFrame) : 16;
+    s_lastFrame = now;
+    // The rain: BACKDROP across the whole page (its holes keep it off
+    // everything), CODE FALL down the instruments (drawn inside them).
+    if (!s_back.ready) rainInit(s_back, 0, 320, 6, 0, 240, 0.8f, 0xBACD);
+    if (!s_code.ready) rainInit(s_code, COL_X + 2, COL_X + COL_W - 4, 6, STRIP_Y, WF_Y + WF_H - STRIP_Y, 0.7f, 0xC0DE);
+    rainStep(s_back, dt, 0.8f);
+    rainStep(s_code, dt, 0.45f);
+    t.setTextFont(1); t.setTextSize(1);
+    const uint16_t depthHue[4] = { Theme::VAPOR_PURPLE, Theme::CYAN, Theme::GREEN, Theme::VAPOR_PINK };
+    rainDraw(t, s_back, BACKDROP_A, backdropOk, [&](const RainCol& c, int) { return depthHue[c.depth & 3]; });
     const Numbers n = numbers(now);
     drawHeader(t, now);
     drawTiles(t, n);
-    const uint32_t dt = s_lastFrame ? (now - s_lastFrame > 200 ? 200 : now - s_lastFrame) : 16;
-    s_lastFrame = now;
     drawStrip(t, now, n, dt);
     drawWaterfall(t, now, dt);
     drawDish(t, now);
