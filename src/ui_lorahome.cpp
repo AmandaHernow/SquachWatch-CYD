@@ -232,21 +232,32 @@ void drawTiles(TFT_eSPI& t, const Numbers& n) {
 // It reads two rings: the noise samples (one a second, 80 of them) and the
 // packet hits (when, how loud, which network): the noise as a line, the hits
 // as spikes. (A waterfall under it showed the same seconds as colour until
-// 2026-10-16, when it made way for the chats.)
+// 2026-10-16, when it made way for the chats; its colours came back the same
+// day as the strip's own background, and the code rain went.)
 //
-// And three things to keep it alive on a quiet hill, from the Quiet Air Lab
+// And four things to keep it alive on a quiet hill, from the Quiet Air Lab
 // (2026-10-15) and the owner's notes on the first go:
+//   SPECTRUM  behind everything, the old waterfall's field: a grid of cells
+//             twinkling in the theme's own colours (Settings > APPEARANCE),
+//             drifting left, a little brighter when it is quiet. Each packet
+//             leaves heat in its network's colour at its own level, under its
+//             spike, that drifts left with it and cools over about twelve
+//             seconds. Dim, so the line and the spikes always read over it.
 //   PHOSPHOR  the noise is a solid line edge to edge, and a meteor sweeps it
 //             from the left: a white-hot head, a tail fading into an
 //             afterglow layer, sparks thrown off behind it. Real data, slow
 //             glass, a little showing off.
-//   SPARKLE   a few twinkles in the theme's own colours behind the strip
-//             when it is quiet. Decoration, kept dim enough that a packet
-//             always wins.
 //   GHOST     the newest packet keeps echoing: its spike repeats fainter for
 //             two minutes. Real.
 const uint32_t QUIET_MS = 8000, GHOST_MS = 120000;
 const int GLOW_W = 208, GLOW_H = 44;              // inside the strip's border
+// The SPECTRUM's grid: 52 cells of 4 x 2 px fill the 208 x 44 inside, and a
+// column every 1.54 s makes 52 columns the strip's own 80 seconds.
+const int SP_COLS = 52, SP_ROWS = 22, SP_CW = 4, SP_CH = 2;
+const uint32_t SP_COL_MS = 1540;
+struct SpecHeat { float heat[SP_COLS][SP_ROWS]; uint8_t kind[SP_COLS][SP_ROWS]; uint8_t glow[SP_COLS][SP_ROWS]; };
+SpecHeat* s_spec = nullptr;                       // PSRAM, ~6.9 KB
+uint32_t  s_colAt = 0, s_hitSeen = 0;
 
 uint8_t* s_glow = nullptr;                        // PHOSPHOR afterglow, PSRAM
 uint32_t s_lastFrame = 0, s_openedAt = 0;
@@ -294,23 +305,52 @@ uint32_t mix32(uint32_t x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 
 // two-second fade in once it has been quiet for QUIET_MS.
 float sparkleLevel(uint32_t quiet) { return quiet > QUIET_MS ? fminf(1.0f, (quiet - QUIET_MS) / 2000.0f) : 0.0f; }
 
+// The SPECTRUM row for a level, on the spikes' own -120..-40 scale.
+int spRow(int16_t dbm) {
+    int v = 120 + dbm; if (v < 0) v = 0; if (v > 79) v = 79;
+    return SP_ROWS - 1 - (v * SP_ROWS) / 80;
+}
+// A packet's heat in one column: hot at its row and a cooler tail below it,
+// the shape of its spike.
+void heatPacket(int col, int16_t rssi, Lora::Proto p, float scale) {
+    if (!s_spec || col < 0 || col >= SP_COLS) return;
+    const int row = spRow(rssi);
+    const uint8_t k = kindOf(p);
+    for (int r = row; r < SP_ROWS; r++) {
+        const float h = (r == row ? 1.5f : 0.55f / (float)(r - row)) * scale;
+        if (h > s_spec->heat[col][r]) { s_spec->heat[col][r] = h; s_spec->kind[col][r] = k; }
+    }
+}
+// The page opening: the last 80 seconds of packets laid down already cooled
+// by their age, so the strip opens with them in it rather than empty.
+void heatPrefill(uint32_t now) {
+    if (!s_spec) s_spec = (SpecHeat*)heap_caps_calloc(1, sizeof(SpecHeat), MALLOC_CAP_SPIRAM);
+    if (!s_spec) return;
+    memset(s_spec, 0, sizeof(SpecHeat));
+    s_colAt = now; s_hitSeen = 0;
+    for (uint8_t i = 0; i < s_pHitN; i++) {
+        const Lora::Hit& h = s_pHits[i];
+        if (!s_hitSeen || (int32_t)(h.ms - s_hitSeen) > 0) s_hitSeen = h.ms;
+        const uint32_t ago = now - h.ms;
+        if (ago >= 80000) continue;
+        heatPacket(SP_COLS - 1 - (int)(ago / SP_COL_MS), h.rssi, h.proto, expf(-(float)ago / 12000.0f));
+    }
+}
+
 // ---- the rain (the Rain Lab's picks, 2026-10-15) -----------------------------------
 // The DIGITAL background's rain, brought in quietly, the same way it draws:
 // ASCII from the 6x8 font, a white-hot head, a trail that fades.
-//   CODE FALL  faint glyph columns in the theme's colours behind the strip's
-//              phosphor line; the meteor and the spikes stay in front. (It
-//              fell through the waterfall too until 2026-10-16, when the
-//              owner took it out of there.)
 //   CHAT RAIN  a dim rain inside the chat window in the open tab's colour,
 //              cyan for Meshtastic and pink for MeshCore, under the lines.
-//              (A backdrop through the page's background came out the same
-//              day: the owner wanted it in the boxes, not around them.)
+// (It fell behind the strip and through the waterfall as well, and behind the
+// page itself, until 2026-10-16: the owner kept it in the chat window only,
+// and gave the strip the SPECTRUM instead.)
 const char RAIN_GLYPHS[] = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*<>{}[]/\\|+=~SASQUACH";
 const int  RAIN_GN = sizeof(RAIN_GLYPHS) - 1;
-const float CODE_STRIP_A = 0.25f, CHAT_RAIN_A = 0.3f;
+const float CHAT_RAIN_A = 0.3f;
 struct RainCol { float y, v; uint8_t len, depth; bool active; char g[16]; };
 struct Rain { RainCol c[54]; uint8_t n; int16_t x0, spacing, top, h; float density; uint32_t seed; bool ready; };
-Rain s_code = {}, s_chatRain = {};
+Rain s_chatRain = {};
 
 float rainRand(Rain& R) { R.seed = R.seed * 1664525u + 1013904223u; return (R.seed >> 8) / 16777216.0f; }
 char  rainGlyph(Rain& R) { return RAIN_GLYPHS[(int)(rainRand(R) * RAIN_GN) % RAIN_GN]; }
@@ -376,30 +416,54 @@ void drawStrip(TFT_eSPI& t, uint32_t now, const Numbers& n, uint32_t dt) {
     const int x0 = COL_X + 1, w = COL_W - 2;
     t.fillRect(COL_X, STRIP_Y, COL_W, STRIP_H, 0x0000);
     for (int g = 1; g < 4; g++) t.drawFastHLine(x0, STRIP_Y + g * STRIP_H / 4, w, 0x0841);
-    // CODE FALL, faint, behind the phosphor line: clipped to the strip.
-    t.setViewport(x0, STRIP_Y + 1, w, STRIP_H - 2, false);
-    rainDraw(t, s_code, CODE_STRIP_A, [](int, int) { return true; },
-             [&](const RainCol&, int x) { return themeRamp((float)(x - COL_X) / COL_W + now / 9000.0f, 1.0f); });
-    t.resetViewport();
     const Lora::Hit* hits = s_pHits;
     const uint8_t hn = s_pHitN;
     const uint32_t quiet = now - lastPacketMs(hits, hn);
 
-    // SPARKLE, behind everything: a few dim twinkles drifting left, in the
-    // spectrum's colours, while it is quiet.
-    const float spk = sparkleLevel(quiet);
-    if (spk > 0) {
-        const uint32_t drift = now / 220;                 // one pixel every 0.22 s
-        for (int i = 0; i < 24; i++) {
-            const uint32_t h = mix32(i * 2654435761u);
-            const int x = x0 + (int)((h % w + w - drift % w) % w);
-            const int y = STRIP_Y + 2 + (int)((h >> 8) % (STRIP_H - 6));
-            const float tw = sinf(now * (0.002f + (h % 7) * 0.0006f) + (h >> 16)) * 0.5f + 0.5f;
-            const float a = tw * tw * tw * 0.45f * spk;
-            if (a < 0.05f) continue;
-            const float u = (float)(x - x0) / w + now / 9000.0f;
-            t.drawPixel(x, y, themeRamp(u, a));
-            if (a > 0.3f) { t.drawPixel(x - 1, y, themeRamp(u, a * 0.4f)); t.drawPixel(x + 1, y, themeRamp(u, a * 0.4f)); }
+    // SPECTRUM, behind everything. A new column every 1.54 s; new packets
+    // heat the newest one; everything cools.
+    if (!s_spec) heatPrefill(now);
+    if (s_spec) {
+        while (now - s_colAt >= SP_COL_MS) {
+            s_colAt += SP_COL_MS;
+            memmove(&s_spec->heat[0][0], &s_spec->heat[1][0], sizeof(float) * SP_ROWS * (SP_COLS - 1));
+            memmove(&s_spec->kind[0][0], &s_spec->kind[1][0], SP_ROWS * (SP_COLS - 1));
+            for (int r = 0; r < SP_ROWS; r++) { s_spec->heat[SP_COLS - 1][r] = 0; s_spec->kind[SP_COLS - 1][r] = 0; }
+        }
+        for (uint8_t i = 0; i < hn; i++) if ((int32_t)(hits[i].ms - s_hitSeen) > 0) {
+            s_hitSeen = hits[i].ms;
+            heatPacket(SP_COLS - 1, hits[i].rssi, hits[i].proto, 1.0f);
+        }
+        const float cool = expf(-(float)dt / 12000.0f);
+        for (int c = 0; c < SP_COLS; c++) for (int r = 0; r < SP_ROWS; r++) s_spec->heat[c][r] *= cool;
+
+        // The field: each cell twinkles on its own steady rhythm, about one
+        // in four lit at a time, drifting left a column every 0.4 s. A cell
+        // the field has moved on from, or that has twinkled down, fades out
+        // over about half a second instead of vanishing (asked for
+        // 2026-10-16), so the drift leaves a short glow behind it.
+        const float spk = (0.6f + 0.4f * sparkleLevel(quiet)) * 0.55f;
+        const uint32_t shift = now / 400;
+        const uint16_t keep = (uint16_t)(expf(-(float)dt / 450.0f) * 256);
+        for (int c = 0; c < SP_COLS; c++) for (int r = 0; r < SP_ROWS; r++) {
+            uint8_t& g = s_spec->glow[c][r];
+            g = (uint8_t)((g * keep) >> 8);
+            const uint32_t h = mix32((uint32_t)(c + shift) * 73856093u ^ (uint32_t)r * 19349663u);
+            if ((h & 3) == 0) {
+                const float tw = sinf(now * (0.0015f + (h >> 4 & 7) * 0.0005f) + (float)(h >> 8 & 255) * 0.0246f) * 0.5f + 0.5f;
+                const uint8_t v = (uint8_t)((0.12f + 0.88f * tw * tw * tw) * 255);
+                if (v > g) g = v;
+            }
+            if (g < 14) continue;
+            const float u = (float)c / SP_COLS + r * 0.018f + now / 9000.0f;
+            t.fillRect(x0 + c * SP_CW, STRIP_Y + 1 + r * SP_CH, SP_CW - 1, SP_CH, themeRamp(u, g / 255.0f * spk));
+        }
+        // The heat, in the network's colour, over the field and under the spikes.
+        for (int c = 0; c < SP_COLS; c++) for (int r = 0; r < SP_ROWS; r++) {
+            const float h = s_spec->heat[c][r];
+            if (h < 0.03f || !s_spec->kind[c][r]) continue;
+            t.fillRect(x0 + c * SP_CW, STRIP_Y + 1 + r * SP_CH, SP_CW - 1, SP_CH,
+                       scale565(kindCol(s_spec->kind[c][r]), fminf(1.0f, h) * 0.6f));
         }
     }
 
@@ -806,6 +870,7 @@ void uiLoraHomeInit(TFT_eSPI& t) {
     s_openedAt = millis();
     s_lastFrame = 0;
     refreshSnapshot(s_openedAt, true);
+    heatPrefill(s_openedAt);
     s_beamIdx = 0;
 
 }
@@ -819,11 +884,8 @@ void uiLoraHomeTick(TFT_eSPI& t, uint32_t now) {
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
     const uint32_t dt = s_lastFrame ? (now - s_lastFrame > 200 ? 200 : now - s_lastFrame) : 16;
     s_lastFrame = now;
-    // The rain: CODE FALL behind the strip, and a CHAT RAIN in the chat
-    // window; each is drawn inside its own box, clipped.
-    if (!s_code.ready)   rainInit(s_code, COL_X + 2, COL_X + COL_W - 4, 6, STRIP_Y, STRIP_H, 0.7f, 0xC0DE);
+    // The CHAT RAIN, drawn inside the chat window, clipped.
     if (!s_chatRain.ready) rainInit(s_chatRain, 7, 313, 6, CHAT_ROWS_Y, CHAT_BOTTOM - CHAT_ROWS_Y, 0.5f, 0xCA75);
-    rainStep(s_code, dt, 0.45f);
     rainStep(s_chatRain, dt, 0.4f);
     const Numbers n = numbers(now);
     drawHeader(t, now);
