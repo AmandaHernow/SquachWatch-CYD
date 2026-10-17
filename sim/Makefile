@@ -139,6 +139,17 @@ UI_SRCS  := $(SRC)/theme.cpp \
 # with a scripted finger. Only here: the live and web builds already compile it.
 SIM_SRCS := $(SIM_DIR)/main_sim.cpp $(SIM_DIR)/detection_sim.cpp $(SRC)/touch_cal.cpp
 
+# The T-Deck's LORA page (the `lora` screen), driven by a made-up band:
+# sim/lora_sim.cpp stands in for the sniffer the way detection_sim.cpp stands
+# in for the detection engine, and the profile table is the real one.
+# SQUACH_LORA_FAKE (on this renderer's own objects only, below) makes
+# include/lora_sniffer.h declare the real calls instead of its no-ops, and is
+# what src/ui_lorahome.cpp is built under here. Not -DSQUACH_LORA: that also
+# switches on the network halves of lora_feed.cpp and lora_enrich.cpp. The
+# live and web builds never see it, so their main.cpp is the CYD's as before.
+SIM_SRCS += $(SRC)/ui_lorahome.cpp $(SIM_DIR)/lora_sim.cpp             $(SRC)/lora_profiles.cpp $(SRC)/lora_crypto.cpp
+SIM_FLAGS := -DSQUACH_LORA_FAKE=1
+
 # The interactive target additionally compiles the firmware's real
 # main.cpp -- its actual setup()/loop(), state machine, gesture handling
 # and touch mapping -- plus the two touch modules main.cpp includes.
@@ -254,7 +265,7 @@ $(OBJ_DIR)/ui/%.o: %.cpp Makefile
 
 $(OBJ_DIR)/sim/%.o: %.cpp Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(SIM_FLAGS) -MMD -MP -c -o $@ $<
 
 $(OBJ_DIR)/live/%.o: %.cpp Makefile
 	@mkdir -p $(dir $@)

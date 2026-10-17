@@ -32,6 +32,22 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.39.0 "Radar Love", at the T-Deck Plus's 320x240: the LORA page on the
+    # emulator's made-up band (sim/lora_sim.cpp: Bluff Creek, cryptids only).
+    # A packet lands 0.7 s into every capture, on the open tab's network, so
+    # each scene opens with a loud ping on the radar and a new chat line. The
+    # Meshtastic tab, the radar, a quiet band (SQUACHSIM_LORAQUIET: nothing
+    # for 30 s, so the SPECTRUM twinkles and the meteor has the strip to
+    # itself), the MeshCore tab (--tab 1), and a line typed and sent
+    # (SQUACHSIM_LORATYPE). SQUACHSIM_LORATX turns LORA TX on, so the compose
+    # line reads as it does on a board that can send.
+    "radar-love": [
+        ("lora", 30, 40, [], {"SQUACHSIM_LORATX": "1"}, 1500, "THE T-DECK GOT A RADIO PAGE. PRESS ENTER."),
+        ("lora", 75, 40, [], {"SQUACHSIM_LORATX": "1"}, 1600, "A RADAR THAT ONLY TELLS THE TRUTH"),
+        ("lora", 120, 50, [], {"SQUACHSIM_LORAQUIET": "30", "SQUACHSIM_LORATX": "1"}, 1500, "QUIET AIR? IT STILL PUTS ON A SHOW."),
+        ("lora", 40, 40, ["--tab", "1"], {"SQUACHSIM_LORATX": "1"}, 1500, "TAP A TAB: MESHTASTIC OR MESHCORE"),
+        ("lora", 20, 60, ["--tab", "1"], {"SQUACHSIM_LORATYPE": "WHO TOOK MY TRAIL MIX?"}, 1800, "TYPE. ENTER. THE WHOLE FOREST KNOWS."),
+    ],
     # v1.38.0 "Snoop Onto Them", 320x240: an Axon body-cam alert and a gunshot
     # sensor's (--alert picks the kind), M3@ty's bad dance (SQUACHSIM_MEATY=4)
     # and a wave while he talks (=5), the FONTS page with BUBBLES slid to

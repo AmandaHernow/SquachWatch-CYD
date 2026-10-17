@@ -77,6 +77,8 @@
 #include "ui_wifinets.h"
 #include "png_writer.h"
 #include "touch_cal.h"
+#include "ui_lorahome.h"
+#include "lora_sim.h"           // the made-up band the LORA page reads
 
 // A few plausible log entries so screens have something real to draw --
 // counters, LOG rows, an ALERT target. Seeded through the engine's own
@@ -289,7 +291,12 @@ static void gpsFeed(uint32_t nowMs) {
 static void usage() {
     fprintf(stderr,
         "usage: squachsim <screen> [out.png] [options]\n"
-        "  screens: clear log alert settings detfilter power diary hunt rawscan watchalert colorcheck boot phone meshmenu meshwarn bingo dex touchcal icons\n"
+        "  screens: clear log alert settings detfilter power diary hunt rawscan watchalert colorcheck boot phone meshmenu meshwarn bingo dex touchcal icons lora\n"
+        "  lora              the T-Deck's LORA page on a made-up band (sim/lora_sim.cpp), at\n"
+        "                    Bluff Creek; render it --size 320x240. --tab 1 opens MESHCORE.\n"
+        "                    SQUACHSIM_LORAQUIET=s: no packets for s seconds before the capture\n"
+        "                    SQUACHSIM_LORATYPE=TEXT: typed from the capture, then Enter\n"
+        "                    SQUACHSIM_LORATX=1: LORA TX on; SQUACHSIM_LORANEW=n: the NEW badge\n"
         "  dex               --pose N opens entry N\'s card (1-17); 0 is the index\n"
         "  touchcal          the touch calibration, played by a scripted finger:\n"
         "                    --frames skips that many 66 ms frames, --sequence films\n"
@@ -694,6 +701,11 @@ int main(int argc, char** argv) {
     // or a blink lands a few milliseconds apart from run to run, and a
     // comparison meant to prove a change left a board alone is all noise.
     if (const char* t0 = getenv("SQUACHSIM_T0")) now = (uint32_t)strtoul(t0, nullptr, 10);
+    // The LORA page's band has a history -- chats from half an hour ago, the
+    // last 80 seconds of packets -- and all of it is millis(), which starts at
+    // zero here. An hour after boot, unless pinned, so none of it is "before
+    // the board was on".
+    else if (screen == "lora") now = 3600000u;
 
     // Virtual time, in the ONE-SHOT renderer too, not just the interactive
     // emulator.
@@ -714,6 +726,11 @@ int main(int argc, char** argv) {
     SimClock::virtualTime = true;
     SimClock::nowMs       = now;
 
+    // The LORA page's compose line, typed: one key every two frames from the
+    // capture (SQUACHSIM_LORATYPE), then Enter.
+    const char* loraType = screen == "lora" ? getenv("SQUACHSIM_LORATYPE") : nullptr;
+    const uint32_t loraTypeAt = now + (uint32_t)frames * STEP_MS;
+    size_t loraTyped = 0;
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
         if      (screen == "clear")    { Theme::setRedGlyph(!Squachy::th3Unlocked()); uiClearEmoteTick(t); uiClearTick(frame, t, engine, true, false);
@@ -831,6 +848,15 @@ int main(int argc, char** argv) {
         else if (screen == "sysprops") uiSysPropsTick(frame, t, engine);
         else if (screen == "wifinets") uiWifiNetsTick(frame, t);
         else if (screen == "wifiadd")  uiWifiAddTick(frame, t, engine);
+        else if (screen == "lora") {
+            SimLora::step(t);
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped <= len; loraTyped++)
+                    uiLoraHomeKey(loraTyped < len ? loraType[loraTyped] : '\n', t);
+            }
+            uiLoraHomeTick(frame, t);
+        }
         else if (screen == "poses") {
             // Every arm movement he has, for the costume test in
             // sim/test_outfit_poses.py: IDLE, WAVE, then each VisitPose, each at
@@ -988,6 +1014,19 @@ int main(int argc, char** argv) {
         }
     }
     else if (screen == "wifinets")   uiWifiNetsInit(frame);
+    else if (screen == "lora") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        lc.quietSecs = getenv("SQUACHSIM_LORAQUIET") ? (uint16_t)atoi(getenv("SQUACHSIM_LORAQUIET")) : 0;
+        lc.net       = tabIdx ? 1 : 0;
+        lc.unread    = getenv("SQUACHSIM_LORANEW") ? (uint16_t)atoi(getenv("SQUACHSIM_LORANEW")) : 0;
+        // LORA TX set, not cycled blind: the NVS shim may remember a run.
+        const bool tx = getenv("SQUACHSIM_LORATX") || getenv("SQUACHSIM_LORATYPE");
+        for (int g = 0; g < 3 && (Settings::loraTxDbm() != 0) != tx; g++) Settings::cycleLoraTx();
+        SimLora::begin(lc);
+        uiLoraHomeInit(frame);
+        uiLoraHomeSetNet(lc.net);
+    }
     else if (screen == "wifiadd")    uiWifiAddInit(frame);
     else if (screen == "dex") {
         // Eleven of the seventeen caught, through the engine's own door, with
