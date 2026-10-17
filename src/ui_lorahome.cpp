@@ -4,7 +4,9 @@
 // the tiles and the strip in the 210 to its right, one info line at 109,
 // the tabbed chat window from 120 down, the compose line at 213, the bar at
 // 226.
-#if SQUACH_LORA && defined(TDECK_PLUS)
+// SQUACH_LORA_FAKE: the PC emulator's one-shot renderer, which drives this
+// page off sim/lora_sim.cpp. No board defines it.
+#if (SQUACH_LORA && defined(TDECK_PLUS)) || SQUACH_LORA_FAKE
 #include "ui_lorahome.h"
 #include "ui_lorachat.h"
 #include "lora_sniffer.h"
@@ -97,21 +99,27 @@ void drawHeader(TFT_eSPI& t, uint32_t now) {
     // BACK in the top-right corner, away from the compose line's switch: at
     // the bottom it was a thumb's slip from MESHCORE (asked for 2026-10-15).
     small(t, t.width() - 6 - 54, 3, "[ BACK ]", Theme::PURPLE);
-    // Each network's preset, under the title, in its colour.
-    char mt[32] = "MT off", mc[32] = "MC off";
+    // Each network's preset, under the title, in its colour: the band's main
+    // one, the first in the table, which is the one the radio listens to and
+    // sends on (LongFast for Meshtastic). It used to keep the last, and read
+    // LongMod on US 915.
+    char mt[32] = "", mc[32] = "";
     for (uint8_t i = 0; i < Lora::profileCount(); i++) {
         const Lora::Profile& p = Lora::profile(i);
         if (p.group != Lora::PG_MESH_US && p.group != Lora::PG_MESH_EU) continue;
         char mhz[12], bw[8];
         Lora::formatMHz(p.freqHz, mhz, sizeof mhz);
         Lora::formatBw(p.bwKhz10, bw, sizeof bw);
-        if (p.hint == Lora::Proto::MESHTASTIC) snprintf(mt, sizeof mt, "MT %s SF%u BW%s", mhz, (unsigned)p.sf, bw);
-        if (p.hint == Lora::Proto::MESHCORE)   snprintf(mc, sizeof mc, "MC %s SF%u BW%s", mhz, (unsigned)p.sf, bw);
+        if (p.hint == Lora::Proto::MESHTASTIC && !mt[0]) snprintf(mt, sizeof mt, "MT %s SF%u BW%s", mhz, (unsigned)p.sf, bw);
+        if (p.hint == Lora::Proto::MESHCORE   && !mc[0]) snprintf(mc, sizeof mc, "MC %s SF%u BW%s", mhz, (unsigned)p.sf, bw);
     }
+    if (!mt[0]) strcpy(mt, "MT off");
+    if (!mc[0]) strcpy(mc, "MC off");
     small(t, 14, 14, mt, Settings::loraListen() & 1 ? Theme::CYAN : dim(Theme::CYAN, 110));
     small(t, 176, 14, mc, Settings::loraListen() & 2 ? Theme::PINK : dim(Theme::PINK, 110));
-    // The radio-busy dot: lit while the radio is on.
-    if (Lora::mode() != Lora::Mode::OFF) t.fillCircle(296, 17, 2, Theme::GREEN);
+    // The radio-busy dot: lit while the radio is on, at the left end of the
+    // preset line (at the right end it sat on MeshCore's bandwidth).
+    if (Lora::mode() != Lora::Mode::OFF) t.fillCircle(7, 17, 2, Theme::GREEN);
 }
 
 // ---- one snapshot a frame -------------------------------------------------------
@@ -725,7 +733,8 @@ void drawDish(TFT_eSPI& t, uint32_t now) {
         }
     }
     t.fillCircle(cx, cy, 2, Theme::WHITE);
-    small(t, cx - 3, cy - R - 9, "N", dim(Theme::WHITE, 110));
+    // Just inside the rim: above it, it sat on the Meshtastic preset line.
+    small(t, cx - 3, cy - R + 2, "N", dim(Theme::WHITE, 110));
     small(t, cx - R + 2, cy + R - 8, "10mi", dim(Theme::WHITE, 110), 0x0041);
     // Under the dish, one line across the page now the waterfall is gone:
     // the GPS's own state in words (the legend once ended "NO POS" and a
@@ -932,4 +941,4 @@ void uiLoraHomeKey(char c, uint32_t now) {
     if (s_composeN < cap) { s_compose[s_composeN++] = c; s_compose[s_composeN] = '\0'; }
 }
 
-#endif  // SQUACH_LORA && TDECK_PLUS
+#endif  // (SQUACH_LORA && TDECK_PLUS) || SQUACH_LORA_FAKE
