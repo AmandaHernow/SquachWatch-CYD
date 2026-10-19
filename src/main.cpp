@@ -4072,11 +4072,12 @@ void setup() {
 #if SQW_SPEAKER
     powerDiaryBoot();
 #endif
-#if defined(SQW_S3)
+#if defined(SQW_S3) || defined(TAB5)
     // Native USB: with nothing reading the port, every print would otherwise
     // wait its full timeout for a host, and after the chatty first-boot
     // calibration the loop crawled so slowly the screen looked frozen black.
-    // Drop the bytes instead when nobody is listening.
+    // Drop the bytes instead when nobody is listening. (The Tab5 showed the
+    // same thing on 2026-10-19: laggy and freezing only while on the cable.)
     Serial.setTxTimeoutMs(0);
 #endif
     delay(200);
