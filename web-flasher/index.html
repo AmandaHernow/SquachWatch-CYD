@@ -342,6 +342,43 @@
     text-align:center;
   }
 
+  /* SquachWatches in the Wild: the flasher's install count (2026-10-19). */
+  .wild{
+    margin:0 0 18px;
+    padding:12px 14px 10px;
+    border:1px dashed rgba(0,255,136,0.45);
+    border-radius:8px;
+    text-align:center;
+    display:grid; gap:4px;
+  }
+  .wild-label{
+    font-family:'VT323', monospace;
+    font-size:1.05rem;
+    letter-spacing:0.12em;
+    color:var(--vapor-pink);
+  }
+  .wild-count{
+    font-family:'Orbitron', 'VT323', monospace;
+    font-weight:900;
+    font-size:2.4rem;
+    line-height:1.05;
+    color:var(--green);
+    text-shadow:0 0 12px rgba(0,255,136,0.55), 0 0 2px #fff;
+    font-variant-numeric:tabular-nums;
+  }
+  .wild-count.bump{ animation:wildBump 0.9s ease-out; }
+  @keyframes wildBump{
+    0%{ transform:scale(1); color:var(--vapor-yellow); }
+    30%{ transform:scale(1.18); color:var(--vapor-yellow); }
+    100%{ transform:scale(1); color:var(--green); }
+  }
+  .wild-boards{
+    list-style:none; margin:4px 0 0; padding:0;
+    display:flex; flex-wrap:wrap; justify-content:center; gap:4px 12px;
+    font-family:'VT323', monospace; font-size:0.95rem; color:var(--vapor-blue);
+  }
+  .wild-boards b{ color:var(--text); font-weight:normal; }
+
   .board-picker-label{
     display:block;
     font-family:'VT323', monospace;
@@ -716,6 +753,14 @@
   <div class="card">
     <h2>FLASH YOUR DETECTOR</h2>
     <p class="version-note" id="versionNote">checking latest version&hellip;</p>
+    <!-- SquachWatches in the Wild: the count of installs from this page, from
+         tools/install-counter (count.squachwatch.com). Stays hidden if the
+         counter cannot be reached. -->
+    <div class="wild" id="wild" hidden>
+      <div class="wild-label">SQUACHWATCHES IN THE WILD</div>
+      <div class="wild-count" id="wildCount">0</div>
+      <ul class="wild-boards" id="wildBoards"></ul>
+    </div>
 
     <section class="step" aria-labelledby="step1">
       <h3 class="step-title" id="step1"><span class="step-num">1</span> PICK YOUR BOARD</h3>
@@ -740,9 +785,9 @@
       <li>Not on the list? Tell us what it is on <a href="https://github.com/skizzophrenic/SquachWatch-CYD/issues" target="_blank" rel="noopener">GitHub</a>.</li>
     </ul>
     <p class="white-screen-note" id="whiteScreenNote">
-      The 2.8&quot; CYD ships with one of two display drivers depending on the batch, and there\'s no way
-      to tell from the outside. Got a <strong>solid white screen</strong>? It\'s not broken: untick
-      <strong>80 MHz</strong> and flash again, and if it\'s still white, flash the other 2.8&quot; option above.
+      The 2.8&quot; CYD ships with one of two display drivers depending on the batch, and there's no way
+      to tell from the outside. Got a <strong>solid white screen</strong>? It's not broken: untick
+      <strong>80 MHz</strong> and flash again, and if it's still white, flash the other 2.8&quot; option above.
     </p>
       <div class="tiles" id="boardTiles" role="radiogroup" aria-label="Board"></div>
       <div class="select-fallback">
@@ -1455,6 +1500,82 @@
     "Boom. Go find some cameras.",
   ];
 
+  // ---- SquachWatches in the Wild ----------------------------------------
+  // One POST to count.squachwatch.com when an install finishes, naming the
+  // board (from the install button's manifest); nothing else is sent. The
+  // page shows the running total and the five boards seen most.
+  (function () {
+    var API = 'https://count.squachwatch.com';
+    var NAMES = {
+      'cyd': '2.8" CYD', 'cyd-fast': '2.8" CYD', 'cyd-ili9341': '2.8" CYD', 'cyd-ili9341-fast': '2.8" CYD',
+      'freenove32': '3.2" Freenove', 'cyd32c': '3.2" CYD', 'cyd35-fast': '3.5" CYD', 'cyd35c-fast': '3.5" CYD',
+      'awok': 'AWOK', 'rlphantom-r': 'RL Phantom',
+      'freenove-s3': 'Freenove S3 2.8"', 'freenove-s3-35': 'Freenove S3 3.5"', 'crowpanel7': 'CrowPanel 7"',
+      'tdeck-plus': 'T-Deck', 'nm-cyd-c5': 'NM-CYD-C5', 'marauder-v8': 'Marauder V8',
+      'sticks3': 'StickS3', 'cardputer-adv': 'Cardputer', 'twatch-s3': 'T-Watch'
+    };
+    var box = document.getElementById('wild');
+    var countEl = document.getElementById('wildCount');
+    var boardsEl = document.getElementById('wildBoards');
+    var shown = 0;
+    if (!box || !countEl) return;
+
+    function fmt(n) { return Math.round(n).toLocaleString('en-US'); }
+    function countTo(target) {
+      var from = shown, start = null, dur = shown ? 600 : 1400;
+      function step(t) {
+        if (start === null) start = t;
+        var k = Math.min(1, (t - start) / dur);
+        var e = 1 - Math.pow(1 - k, 3);
+        countEl.textContent = fmt(from + (target - from) * e);
+        if (k < 1) requestAnimationFrame(step); else shown = target;
+      }
+      requestAnimationFrame(step);
+    }
+    function render(d) {
+      if (!d || typeof d.total !== 'number') return;
+      box.hidden = false;
+      countTo(d.total);
+      // Board families, merged by shown name, most first.
+      var fam = {};
+      Object.keys(d.boards || {}).forEach(function (k) {
+        var n = NAMES[k]; if (!n) return;
+        fam[n] = (fam[n] || 0) + d.boards[k];
+      });
+      var top = Object.keys(fam).sort(function (a, b) { return fam[b] - fam[a]; }).slice(0, 5);
+      boardsEl.innerHTML = '';
+      top.forEach(function (n) {
+        var li = document.createElement('li');
+        var b = document.createElement('b'); b.textContent = n;
+        li.appendChild(b); li.appendChild(document.createTextNode(' ' + fmt(fam[n])));
+        boardsEl.appendChild(li);
+      });
+    }
+    fetch(API + '/', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(render)
+      .catch(function () { /* no counter: the box stays hidden */ });
+
+    window.squachWildHit = function () {
+      var btn = document.getElementById('installBtn');
+      var mf = btn ? (btn.getAttribute('manifest') || '') : '';
+      var m = mf.match(/manifest-(?:lab-)?([a-z0-9-]+)\.json$/);
+      if (!m) return;
+      fetch(API + '/hit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board: m[1] })
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          render(d);
+          countEl.classList.remove('bump'); void countEl.offsetWidth; countEl.classList.add('bump');
+        })
+        .catch(function () {});
+    };
+  })();
+
   function watchInstallDialog(dialog) {
     var wasInstalling = false;
     try {
@@ -1463,6 +1584,7 @@
         if (state === 'INSTALL' || state === 'ASK_ERASE') wasInstalling = true;
         if (state === 'DASHBOARD' && wasInstalling) {
           wasInstalling = false;
+          if (window.squachWildHit) window.squachWildHit();
           if (phase === 'auto') {
             mode = 'dance';
             moving = false;
