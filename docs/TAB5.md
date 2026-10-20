@@ -98,6 +98,12 @@ and four times the drawing for the same layouts.
   Every other board's backgrounds render pixel-for-pixel the same as before
   (`sim/bg_before_after.sh`). On the board: terminal 31–44 fps, toasters 24,
   glyph rain 15, fire 11.
+- **Its own starting sizes.** On a fresh Tab5 the FONTS page starts with
+  button labels one step bigger and the counter tiles one step smaller,
+  picked by comparing every step on the real screens
+  (`sim/render_tab5_scale.sh`, which renders them with `squachsim-tab5` from
+  `sim/build_tab5_sim.sh`). The owl, the wolf and the snow riders speak in
+  the pets' text size on every board now, so FONTS > PETS moves them too.
 - **Why animated backgrounds are slower:** the cost is the CPU writing into
   PSRAM while the DSI engine is reading the same memory, about 30 ms for a
   full 1.8 MB frame. The P4's 2D hardware (the PPA, which scales and rotates)

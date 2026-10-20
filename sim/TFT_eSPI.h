@@ -43,6 +43,7 @@
 #include <algorithm>
 #include "glcdfont_data.h"
 #include "font16_data.h"
+#include "font32_data.h"
 #include "gfxff/gfxfont.h"
 
 // The GLCD font's cell, matching the real library exactly. Five glyph
@@ -192,6 +193,32 @@ public:
         return width * textsize;
     }
 
+    // Font 4: the library's 26-row run-length face. Each byte is a run, MSB
+    // set for ink: (b & 0x7F) + 1 pixels of text colour, else b + 1 of
+    // background, filling the glyph's width row by row -- TFT_eSPI's own
+    // decoder. Only the Tab5 build loads it (LOAD_FONT4).
+    int16_t drawChar4(uint16_t c, int32_t x, int32_t y) {
+        if (c < 32 || c > 127) return 0;
+        const unsigned char* g = chrtbl_f32[c - 32];
+        const int width = widtbl_f32[c - 32];
+        const int total = width * chr_hgt_f32;
+        int pc = 0;
+        while (pc < total) {
+            const uint8_t line = *g++;
+            const bool on = line & 0x80;
+            int run = (line & 0x7F) + 1;
+            while (run-- && pc < total) {
+                const int col = pc % width, row = pc / width;
+                pc++;
+                if (!on && transparent) continue;
+                const uint16_t col565 = on ? textcolor : textbgcolor;
+                if (textsize == 1) drawPixel(x + col, y + row, col565);
+                else fillRect(x + col * textsize, y + row * textsize, textsize, textsize, col565);
+            }
+        }
+        return width * textsize;
+    }
+
     // An Adafruit GFX face, the way the real library prints one: the cursor
     // is the BASELINE, glyphs sit at (x + xOffset, y + yOffset), bits packed
     // row-major with no padding, and the cursor moves on by xAdvance.
@@ -214,6 +241,7 @@ public:
     virtual int16_t drawChar(uint16_t c, int32_t x, int32_t y, uint8_t /*font*/ = 1) {
         if (gfxFont) return drawCharGfx(c, x, y);
         if (textfont == 2) return drawChar2(c, x, y);
+        if (textfont == 4) return drawChar4(c, x, y);
         if (c > 255) return GLCD_ADVANCE * textsize;
         // GLCD_ADVANCE columns, not GLCD_W. The sixth is always blank and
         // exists to be painted in the background colour: real TFT_eSPI writes
@@ -416,9 +444,9 @@ public:
     // (not "helpfully" treating the argument as a size) is deliberate:
     // it's what would surface a real latent bug in the caller instead
     // of hiding it.
-    int16_t fontHeight(int font) const { return font == 1 ? GLCD_H * textsize : (font == 2 ? 16 * textsize : 0); }
+    int16_t fontHeight(int font) const { return font == 1 ? GLCD_H * textsize : font == 2 ? 16 * textsize : font == 4 ? chr_hgt_f32 * textsize : 0; }
     int16_t fontHeight() const { return gfxFont ? gfxFont->yAdvance * textsize : fontHeight(textfont); }
-    void setTextFont(uint8_t f) { textfont = (f == 2) ? 2 : 1; gfxFont = nullptr; }
+    void setTextFont(uint8_t f) { textfont = (f == 2 || f == 4) ? f : 1; gfxFont = nullptr; }
     void setFreeFont(const GFXfont* f) { gfxFont = f; textfont = 1; }
     int16_t textWidth(const char* s) const {
         int16_t w = 0;
@@ -434,6 +462,10 @@ public:
         }
         if (textfont == 2) {
             for (; *s; s++) { const unsigned char c = (unsigned char)*s; if (c >= 32 && c <= 127) w += widtbl_f16[c - 32] * textsize; }
+            return w;
+        }
+        if (textfont == 4) {
+            for (; *s; s++) { const unsigned char c = (unsigned char)*s; if (c >= 32 && c <= 127) w += widtbl_f32[c - 32] * textsize; }
             return w;
         }
         for (; *s; s++) w += GLCD_ADVANCE * textsize;
