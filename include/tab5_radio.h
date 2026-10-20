@@ -16,8 +16,9 @@
 // the loop drains. Nothing in here parses a frame; detection.cpp does that
 // with the same code every other board runs on its own radio.
 //
-// Bluetooth is not driven this round: the C6's HCI over the same link is a
-// later one.
+// Bluetooth: bleBegin() switches on the C6's controller, whose HCI rides the
+// same link; the NimBLE host runs on the P4 and detection.cpp drives it
+// through esp-nimble-cpp, the same scanner every other board runs.
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
@@ -58,6 +59,9 @@ struct Stats {
 // on a link that is up returns true at once.
 bool begin();
 bool up();
+// The C6's Bluetooth controller, after begin(). False when the link is down
+// or the slave refused; the console says which. Call before NimBLE starts.
+bool bleBegin();
 // The slave's hello tag ("squach-sniff 1"), or "" before a hello was answered.
 const char* tag();
 

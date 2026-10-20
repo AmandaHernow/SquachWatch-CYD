@@ -20,16 +20,16 @@ void bootStage(uint8_t s);   // main.cpp: the power diary's steps through setup(
 #include <Arduino.h>
 // Which radios this file drives. The Tab5's ESP32-P4 has none of its own: its
 // WiFi frames come from the ESP32-C6 over ESP-Hosted (tab5_radio.h) and are
-// parsed by the same code every other board runs on its own sniffer; its
-// Bluetooth is not driven yet (the C6's HCI over the same link is a later
-// round), so the NimBLE half of this file is compiled out there.
+// parsed by the same code every other board runs on its own sniffer. Its
+// Bluetooth is the C6's controller over the same link, driven by the NimBLE
+// host the Arduino core builds in, through esp-nimble-cpp: the same API as
+// NimBLE-Arduino, so the scanner below is the one every board runs.
 #if defined(TAB5)
 #define SQW_WIFI_HOSTED 1
-#define SQW_BLE 0
 #else
 #define SQW_WIFI_HOSTED 0
-#define SQW_BLE 1
 #endif
+#define SQW_BLE 1
 #if SQW_WIFI_HOSTED
 #include "tab5_radio.h"
 #else
@@ -54,7 +54,7 @@ void bootStage(uint8_t s);   // main.cpp: the power diary's steps through setup(
 #include "squachy.h"
 #include "settings.h"
 #endif
-#if SQW_BLE
+#if SQW_BLE && !defined(TAB5)   // the P4 has no controller of its own, so no esp_bt.h
 #include <esp_bt.h>
 #endif
 // esp_gap_bt_api.h was here and is not any more. It is a Bluetooth Classic
@@ -93,6 +93,17 @@ static inline void sniffOn()                   { esp_wifi_set_promiscuous(true);
 static inline void sniffOff()                  { esp_wifi_set_promiscuous(false); }
 static inline void setSniffChannel(uint8_t ch) { esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE); }
 static inline void rawScanDelete()             { WiFi.scanDelete(); }
+#endif
+
+// Whether the Bluetooth stack is up. Always, once init() has run, on a board
+// with its own controller. On the Tab5 the controller is the C6's, and a boot
+// whose link did not come up has no stack at all: everything that would post
+// to NimBLE's host task or touch the advertiser checks this first.
+#if defined(TAB5)
+static bool s_bleLive = false;
+static inline bool bleLive() { return s_bleLive; }
+#else
+static inline bool bleLive() { return true; }
 #endif
 
 // -------- manual raw scanner state (see startRawBleScan/startRawWifiScan) --------
@@ -1005,7 +1016,23 @@ bool DetectionEngine::init() {
     BOOT_STAGE(5);
     Serial.println("[boot] starting Bluetooth");
     serialFlush();
+#if defined(TAB5)
+    // The C6's controller first; without it NimBLEDevice::init() waits for
+    // a sync that never comes, forever.
+    if (!Tab5Radio::bleBegin()) {
+        Serial.println("[boot] no Bluetooth this boot: BLE detections are off");
+        BOOT_STAGE(7);
+        s_bootHeap.bleFree    = ESP.getFreeHeap();
+        s_bootHeap.bleLargest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        _sd.begin();
+        BOOT_STAGE(8);
+        return true;
+    }
+#endif
     NimBLEDevice::init("");
+#if defined(TAB5)
+    s_bleLive = true;
+#endif
     BOOT_STAGE(6);
     NimBLEScan* scan = NimBLEDevice::getScan();
     // Passive to start, whatever the room: the first second of an active
@@ -1058,21 +1085,14 @@ bool DetectionEngine::init() {
     Serial.printf("[boot] heap with Bluetooth up: %lu free, %lu largest\n",
                   (unsigned long)s_bootHeap.bleFree, (unsigned long)s_bootHeap.bleLargest);
 
+#if !defined(TAB5)
     // 4. BT Classic inquiry for skimmer names (best-effort, every 60 s)
     if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
         // We don't try to *start* the controller here — NimBLE may have
         // taken it over. The v1.0 implementation is BLE-only for skimmers
         // (advertised name match). Documented in docs/DETECTIONS.md.
     }
-
-#else
-    // Not yet: the C6's Bluetooth controller is reached over the same link,
-    // through its HCI, and that is a later round.
-    BOOT_STAGE(5);
-    Serial.println("[boot] Bluetooth: not driven on this board yet");
-    BOOT_STAGE(7);
-    s_bootHeap.bleFree    = ESP.getFreeHeap();
-    s_bootHeap.bleLargest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+#endif
 #endif  // SQW_BLE
 
     // 5. SD card (best-effort), now that the radios have what they need.
@@ -1170,6 +1190,7 @@ static bool            s_txWasSending = false;
 // The old s_advOn flag meant "we requested advertising" and was set even
 // when NimBLE failed to start. Never use it to claim that RF is enabled.
 bool advertising() {
+    if (!bleLive()) return false;
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
     return adv && adv->isAdvertising();
 }
@@ -1308,6 +1329,7 @@ void radioTick(uint32_t now) {
     // Resting radios have nothing to advertise with unless BLE stayed up.
     if (g_rawMode == RawScanMode::UPDATE) return;
     if (g_rawMode == RawScanMode::REST && g_restBle) return;
+    if (!bleLive()) return;
     // Our own address goes into the nonce of every message we send, so the
     // runtime needs it -- read once, after the stack is up, and copied out of
     // a named NimBLEAddress rather than through a pointer into a temporary.
@@ -1353,7 +1375,7 @@ void radioTick(uint32_t now) {
     if (!want) s_txWasSending = false;
 }
 
-void stopAdvertisingForUpdate() { setAdvertising(false, 0); }
+void stopAdvertisingForUpdate() { if (bleLive()) setAdvertising(false, 0); }
 
 } // namespace Mesh
 #endif
@@ -1494,6 +1516,10 @@ static bool scanModeTick(uint32_t now, uint32_t largest) {
 uint32_t advertRate() { return s_advRate; }
 
 static void scanFlushTick() {
+    if (!bleLive()) {
+        s_heapLow = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 1536;
+        return;
+    }
     // Printed from here rather than the host task, which should never be kept
     // waiting on the UART.
     if (s_flush.count != s_flushLogged) {
@@ -2113,24 +2139,24 @@ static void updScanStartOnHost(struct ble_npl_event*) {
 }
 
 void DetectionEngine::startUpdateRadio() {
-    if (!s_updEvReady) {
+    if (!s_updEvReady && bleLive()) {
         ble_npl_event_init(&s_updStopEv,  updScanStopOnHost,  nullptr);
         ble_npl_event_init(&s_updStartEv, updScanStartOnHost, nullptr);
         s_updEvReady = true;
     }
-    if (g_rawMode == RawScanMode::WIFI) WiFi.scanDelete();
+    if (g_rawMode == RawScanMode::WIFI) rawScanDelete();
     g_rawMode = RawScanMode::UPDATE;
-    esp_wifi_set_promiscuous(false);
+    sniffOff();
 #if SQUACH_MESH
     Mesh::stopAdvertisingForUpdate();
 #endif
-    ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_updStopEv);
+    if (s_updEvReady) ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_updStopEv);
 }
 
 void DetectionEngine::stopUpdateRadio() {
     if (g_rawMode != RawScanMode::UPDATE) return;
     g_rawMode = RawScanMode::NONE;
-    esp_wifi_set_promiscuous(true);
+    sniffOn();
     if (s_updEvReady) ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_updStartEv);
 }
 
@@ -2142,20 +2168,22 @@ void DetectionEngine::stopUpdateRadio() {
 // owns the radio, and the cycle waits its turn.
 bool DetectionEngine::restRadios(bool bleToo) {
     if (g_rawMode != RawScanMode::NONE) return false;
-    if (!s_updEvReady) {
+    if (!s_updEvReady && bleLive()) {
         ble_npl_event_init(&s_updStopEv,  updScanStopOnHost,  nullptr);
         ble_npl_event_init(&s_updStartEv, updScanStartOnHost, nullptr);
         s_updEvReady = true;
     }
     g_rawMode = RawScanMode::REST;
     g_restBle = bleToo;
-    esp_wifi_set_promiscuous(false);
-    esp_wifi_stop();
+    sniffOff();
+#if !SQW_WIFI_HOSTED
+    esp_wifi_stop();   // not the C6's: its driver carries the sniff extension
+#endif
     if (bleToo) {
 #if SQUACH_MESH
         Mesh::stopAdvertisingForUpdate();
 #endif
-        ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_updStopEv);
+        if (s_updEvReady) ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_updStopEv);
     }
     return true;
 }
@@ -2163,13 +2191,15 @@ bool DetectionEngine::restRadios(bool bleToo) {
 void DetectionEngine::wakeRadios() {
     if (g_rawMode != RawScanMode::REST) return;
     g_rawMode = RawScanMode::NONE;
+#if !SQW_WIFI_HOSTED
     esp_wifi_start();
-    esp_wifi_set_promiscuous(true);
+#endif
+    sniffOn();
 #if SQW_WIFI_5G
     s5Len = s5Pos = 0;                           // a slice cut short by the rest is dropped, not scored
     if (!_wifiChannel) _wifiChannel = 1;
 #endif
-    esp_wifi_set_channel(_wifiChannel, WIFI_SECOND_CHAN_NONE);
+    setSniffChannel(_wifiChannel);
     _lastHopMs = millis();                       // the visit starts now, not before the rest
     s_chanFrames[_wifiChannel] = 0;
     if (g_restBle && s_updEvReady) ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_updStartEv);

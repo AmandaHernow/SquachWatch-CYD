@@ -13,7 +13,11 @@ the bench scripts. The P4 side (the app) is `[env:tab5]` in platformio.ini and
   image**: ESP-Hosted slave 2.12.13 plus `squach_sniff.c`. It answers the
   hello with `squach-sniff 1`.
 - The app's WiFi detection runs through it (commit f3c94e7): every WiFi shot
-  from SquachEmit was caught. Bluetooth on the Tab5 is not done yet.
+  from SquachEmit was caught.
+- Bluetooth runs through it too: the C6's controller (stock in the slave,
+  HCI over the same SDIO link) and the NimBLE host the Arduino core builds
+  in, driven by esp-nimble-cpp 2.5.0 (same API as NimBLE-Arduino, which
+  cannot be used: it brings its own host and expects a local controller).
 - Copies of both C6 images and the write tool are in `sim/out/tab5/c6/`
   (ignored by git): `squach-2.12.13.bin` (ours), `stock-2.12.13.bin`
   (Espressif's, for a rollback), and `bootloader.bin`, `partition-table.bin`,
@@ -36,6 +40,10 @@ the bench scripts. The P4 side (the app) is `[env:tab5]` in platformio.ini and
 - **The slave does not start WiFi on its own.** Sniffing is refused
   (ESP_ERR_WIFI_NOT_INIT) until the P4 calls the remote esp_wifi_init /
   set_mode / start.
+- **Bluetooth needs the controller switched on first.** The app calls
+  `esp_hosted_bt_controller_init()` and `_enable()` after the link is up,
+  then `NimBLEDevice::init()`. Without them init waits for a host sync that
+  never comes, forever, so a boot whose link is down skips Bluetooth.
 - **CustomRpc refuses an empty payload** (ESP_ERR_INVALID_ARG). The hello
   sends one byte. The core's host allows only 3 custom handlers.
 - **Brownout on weak USB.** On a front-panel USB port the Tab5 browned out

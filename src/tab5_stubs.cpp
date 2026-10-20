@@ -1,17 +1,15 @@
 // SquachWatch-CYD — what the Tab5 build does not have yet, stood in for.
 //
 // The ESP32-P4 has no radio of its own; the Tab5's ESP32-C6 hangs off SDIO
-// and src/tab5_radio.cpp drives its WiFi sniffer into the real detection
-// engine (detection.cpp builds on this board with its Bluetooth half
-// compiled out). Three things are still not driven and their files are out
+// and src/tab5_radio.cpp drives its WiFi sniffer and its Bluetooth
+// controller into the real detection engine. Three things are still not driven and their files are out
 // of [env:tab5] (its build_src_filter): the SD card (sd_log.cpp), a
 // Bluetooth update (ota_ble.cpp) and a WiFi connection for an update
 // (ota_wifi.cpp). This file supplies what they would have, the way the
-// emulator's sim/detection_sim.cpp and sim/ota_sim.cpp do, plus the Mesh
-// radio half that lives in detection.cpp's Bluetooth section everywhere else.
+// emulator's sim/detection_sim.cpp and sim/ota_sim.cpp do.
 //
-// When the C6's Bluetooth is driven, the Mesh stubs go; when its WiFi
-// connection is, OtaWifi's do.
+// When the C6's WiFi connection is driven, OtaWifi's stubs go; when a
+// Bluetooth update is, OtaBle's.
 #if defined(TAB5)
 
 #include "detection.h"
@@ -27,16 +25,6 @@ void SdLog::tick() {}
 void SdLog::wipe() {}
 void SdLog::openDaily() {}
 
-// ---- Mesh's radio half: nothing transmits, nothing is advertising ---------
-#if SQUACH_MESH
-namespace Mesh {
-bool     advertising() { return false; }
-TxStatus txStatus() { return TxStatus{ false, false, 0, 0, 0 }; }
-void     radioTick(uint32_t) {}
-void     stopAdvertisingForUpdate() {}
-}
-#endif
-
 // ---- OtaBle: no Bluetooth on this board yet --------------------------------
 namespace OtaBle {
 bool        available()     { return false; }
@@ -48,7 +36,7 @@ bool        codeAccepted()  { return false; }
 uint8_t     percent()       { return 0; }
 uint32_t    bytesReceived() { return 0; }
 uint32_t    bytesExpected() { return 0; }
-const char* failureText()   { return "No Bluetooth on this board yet."; }
+const char* failureText()   { return "No Bluetooth update on this board yet."; }
 const char* deviceName()    { return "SquachWatch"; }
 uint32_t    pairingCode()   { return 0; }
 }  // namespace OtaBle

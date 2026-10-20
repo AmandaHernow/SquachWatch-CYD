@@ -288,6 +288,30 @@ bool begin() {
 bool up() { return s_up; }
 const char* tag() { return s_tag; }
 
+bool bleBegin() {
+    // The C6's Bluetooth controller, over the link begin() brought up. Its
+    // HCI rides the same SDIO transport as the WiFi RPCs; the NimBLE host on
+    // the P4 (the Arduino core's, built with ESP-Hosted's VHCI transport)
+    // talks to it once this returns. The same two calls the core's own BLE
+    // library makes in hostedInitBLE().
+    if (!s_up) {
+        Serial.println("[c6] no link, so no Bluetooth controller");
+        return false;
+    }
+    esp_err_t e = esp_hosted_bt_controller_init();
+    if (e != ESP_OK) {
+        Serial.printf("[c6] bluetooth controller init failed: %s\n", esp_err_to_name(e));
+        return false;
+    }
+    e = esp_hosted_bt_controller_enable();
+    if (e != ESP_OK) {
+        Serial.printf("[c6] bluetooth controller enable failed: %s\n", esp_err_to_name(e));
+        return false;
+    }
+    Serial.println("[c6] bluetooth controller up");
+    return true;
+}
+
 bool sniff(bool on) {
     const uint8_t v = on ? 1 : 0;
     return send(CMD_SNIFF, &v, 1);
