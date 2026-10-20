@@ -18,10 +18,27 @@ void bootStage(uint8_t s);   // main.cpp: the power diary's steps through setup(
 #define BOOT_STAGE(n) ((void)0)
 #endif
 #include <Arduino.h>
+// Which radios this file drives. The Tab5's ESP32-P4 has none of its own: its
+// WiFi frames come from the ESP32-C6 over ESP-Hosted (tab5_radio.h) and are
+// parsed by the same code every other board runs on its own sniffer; its
+// Bluetooth is not driven yet (the C6's HCI over the same link is a later
+// round), so the NimBLE half of this file is compiled out there.
+#if defined(TAB5)
+#define SQW_WIFI_HOSTED 1
+#define SQW_BLE 0
+#else
+#define SQW_WIFI_HOSTED 0
+#define SQW_BLE 1
+#endif
+#if SQW_WIFI_HOSTED
+#include "tab5_radio.h"
+#else
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_netif.h>
 #include <esp_wifi_netif.h>
+#endif
+#if SQW_BLE
 #include <NimBLEDevice.h>
 #include <NimBLEAdvertisedDevice.h>
 #include <NimBLEScan.h>
@@ -31,12 +48,15 @@ void bootStage(uint8_t s);   // main.cpp: the power diary's steps through setup(
 #else
 #include "nimble/porting/nimble/include/nimble/nimble_port.h"
 #endif
+#endif
 #if SQUACH_MESH
 #include "squachmesh.h"
 #include "squachy.h"
 #include "settings.h"
 #endif
+#if SQW_BLE
 #include <esp_bt.h>
+#endif
 // esp_gap_bt_api.h was here and is not any more. It is a Bluetooth Classic
 // header and does not exist on BLE-only silicon -- on the ESP32-C5 the build
 // dies at "fatal error: esp_gap_bt_api.h: No such file or directory" before
@@ -53,10 +73,27 @@ void bootStage(uint8_t s);   // main.cpp: the power diary's steps through setup(
 // on one target and wrong on another is worse than no guard.
 #include <esp_heap_caps.h>
 #include <string.h>
+#if !defined(TAB5)   // the Tab5's card is not driven yet; nothing here reads SD directly anyway
 #include <SD.h>
+#endif
 
 // -------- global engine instance (referenced by callbacks) --------
 static DetectionEngine* g_engine = nullptr;
+
+// The sniffer's three switches, on whichever radio this board has. On the
+// Tab5 each is a message to the C6 (an RPC over SDIO, a few hundred
+// microseconds); everywhere else the driver's own calls.
+#if SQW_WIFI_HOSTED
+static inline void sniffOn()                   { Tab5Radio::sniff(true); }
+static inline void sniffOff()                  { Tab5Radio::sniff(false); }
+static inline void setSniffChannel(uint8_t ch) { Tab5Radio::setChannel(ch); }
+static inline void rawScanDelete()             {}
+#else
+static inline void sniffOn()                   { esp_wifi_set_promiscuous(true); }
+static inline void sniffOff()                  { esp_wifi_set_promiscuous(false); }
+static inline void setSniffChannel(uint8_t ch) { esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE); }
+static inline void rawScanDelete()             { WiFi.scanDelete(); }
+#endif
 
 // -------- manual raw scanner state (see startRawBleScan/startRawWifiScan) --------
 // NONE = normal continuous signature-matched scanning (the default).
@@ -172,6 +209,17 @@ void radioReport(bool withScan) {
     if (g_bootRadioLine[0]) Serial.printf("[radio] boot: %s\n", g_bootRadioLine);
     Serial.printf("[radio] power saver %s, radio duty %s (set to %s)\n", Settings::powerSaver() ? "ON" : "OFF",
                   Settings::radioDutyName(Settings::radioDuty()), Settings::radioDutyName(Settings::radioDutyRaw()));
+#if SQW_WIFI_HOSTED
+    {
+        const Tab5Radio::Stats st = Tab5Radio::stats();
+        Serial.printf("[radio] wifi: the C6 over ESP-Hosted, link %s, tag \"%s\", sniffing on channel %u; c6 seen %lu fwd %lu drop %lu; host rx %lu qfull %lu pend %u acks %lu last %04x:%ld; frames %lu\n",
+                      Tab5Radio::up() ? "up" : "DOWN", Tab5Radio::tag(), (unsigned)st.channel,
+                      (unsigned long)st.seen, (unsigned long)st.forwarded, (unsigned long)st.dropped,
+                      (unsigned long)st.received, (unsigned long)st.queueFull, (unsigned)Tab5Radio::pending(),
+                      (unsigned long)st.acks, (unsigned)st.lastAckCmd, (long)st.lastAckStatus, (unsigned long)s_wifiRaw);
+    }
+    uint8_t ch = 0;
+#else
     wifi_mode_t mode = WIFI_MODE_NULL;
     const esp_err_t me = esp_wifi_get_mode(&mode);
     bool promisc = false;
@@ -185,10 +233,16 @@ void radioReport(bool withScan) {
     Serial.printf("[radio] wifi: mode %d (err %d), sniffer %s, channel %u, tx max %d, country %.2s %u-%u, frames %lu\n",
                   (int)mode, (int)me, promisc ? "on" : "off", (unsigned)ch, (int)txp, cc.cc,
                   (unsigned)cc.schan, (unsigned)(cc.schan + cc.nchan - 1), (unsigned long)s_wifiRaw);
+#endif
+#if SQW_BLE
     NimBLEScan* sc = NimBLEDevice::getScan();
     Serial.printf("[radio] ble: init %d, scanning %d, adverts %lu, raw mode %d, chip %.1f C, up %lu s\n",
                   (int)NimBLEDevice::isInitialized(), sc ? (int)sc->isScanning() : -1,
                   (unsigned long)s_advRaw, (int)g_rawMode, temperatureRead(), (unsigned long)(millis() / 1000));
+#else
+    Serial.printf("[radio] ble: not driven on this board yet, raw mode %d, chip %.1f C, up %lu s\n",
+                  (int)g_rawMode, temperatureRead(), (unsigned long)(millis() / 1000));
+#endif
     {
         char line[160];
         int n = snprintf(line, sizeof line, "[radio] channel busyness, frames/s:");
@@ -211,6 +265,10 @@ void radioReport(bool withScan) {
     }
 #endif
     if (!withScan) return;
+#if SQW_WIFI_HOSTED
+    (void)ch;
+    Serial.println("[radio] no driver scan on this board: the C6's scan is a later round");
+#else
     esp_wifi_set_promiscuous(false);
     wifi_scan_config_t cfg = {};
     cfg.show_hidden = true;
@@ -233,6 +291,7 @@ void radioReport(bool withScan) {
                   (int)se, (unsigned)n, n ? (int)best : 0, (unsigned long)(millis() - t0));
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_channel(ch ? ch : 1, WIFI_SECOND_CHAN_NONE);
+#endif
 }
 static volatile uint8_t s_windowReq = 0;   // a WINDOW command waiting for the next restart
 static bool             s_windowPending = false;
@@ -284,6 +343,7 @@ static void wardriveAdFields(const uint8_t* p, size_t n, char* name /* [33] */, 
 }
 #endif
 
+#if SQW_BLE
 class BleScanCallbacks : public NimBLEScanCallbacks {
     // First sight of every advert, before any reply. The counts live here
     // and not in onResult: in an active scan a device that never answers
@@ -651,6 +711,116 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
     }
 };
 static BleScanCallbacks g_bleScanCallbacks;
+#endif  // SQW_BLE
+
+// -------- the WiFi frame parser --------
+// One 802.11 frame from the sniffer, whichever radio heard it: the driver's
+// promiscuous callback on a board with its own radio, the C6's forwarded
+// frame on the Tab5. `sigLen` is the frame's length on air; `avail` is how
+// many bytes of it are actually here (all of them from a driver, the first
+// 600 of a management frame or the 24-byte header of a data frame from the
+// C6). Everything the frame is read for is bounded by `avail`.
+//
+// 802.11 frame header: bytes 0..23 contain frame control, duration,
+// addr1 (DA, offset 4), addr2 (SA, offset 10), addr3 (BSSID, offset 16).
+static void onWifiFrame(const uint8_t* frame, uint16_t sigLen, uint16_t avail, int8_t rssi, uint8_t channel) {
+    s_wifiRaw++;
+    if (!g_engine) return;
+    {
+        const uint8_t ch = channel;
+        if (ch >= 1 && ch <= 13 && s_chanFrames[ch] < 0xFFFF) s_chanFrames[ch]++;
+#if SQW_WIFI_5G
+        else if (const uint8_t b = bit5(ch)) { if (s5Frames[b] < 0xFFFF) s5Frames[b]++; s5Frames24++; }
+#endif
+    }
+    if (sigLen < 24 || avail < 24) return;
+    const uint8_t fc0 = frame[0];
+    const uint8_t type    = (fc0 & 0x0C) >> 2;
+    const uint8_t subtype = (fc0 & 0xF0) >> 4;
+    // Management frame probe request: type=0, subtype=4
+    if (type == 0 && subtype == 4) {
+        // addr2 (transmitter) is at offset 10
+        g_engine->postWiFi(frame + 10, rssi, channel);
+    } else if (type == 2) {
+        // Data frame: addr1 (DA) and addr2 (SA) both interesting
+        g_engine->postWiFi(frame + 4,  rssi, channel);
+        g_engine->postWiFi(frame + 10, rssi, channel);
+    } else if (type == 0 && subtype == 8) {
+        // Beacon: fixed params (timestamp+interval+capability) run
+        // 12 bytes after the 24-byte header, then the information
+        // elements. They end four bytes before the end of the frame (the
+        // FCS) -- unless the frame arrived cut short, in which case they
+        // end where the bytes do.
+        const uint32_t ieEnd = (avail >= sigLen) ? (sigLen > 4u ? sigLen - 4u : 0u) : avail;
+        const uint16_t ieLen = (ieEnd > 36u) ? (uint16_t)(ieEnd - 36u) : 0;
+        const uint8_t* ies = frame + 36;
+        // The SSID is the first element: tag 0x00, 1-byte length, then up
+        // to 32 bytes of SSID (unescaped, not null-terminated in the frame).
+        char ssid[33] = {0};
+        if (ieLen >= 2 && ies[0] == 0x00) {
+            uint8_t ssidLen = ies[1];
+            if (ssidLen > 32) ssidLen = 32;
+            if (2u + ssidLen <= ieLen) {
+                memcpy(ssid, ies + 2, ssidLen);
+                ssid[ssidLen] = 0;
+            }
+        }
+        // Capability info is the last 2 bytes of the 12-byte fixed
+        // parameter block following the 24-byte header, so offset
+        // 34. Bit 4 (0x10) is Privacy: set means this BSS requires
+        // encryption. That one bit is what separates a mesh node
+        // from an evil twin -- see noteApBeacon().
+        const bool enc = (avail > 35) && ((frame[34] & 0x10) != 0);
+        // A pwnagotchi's beacon is checked before it is treated as an
+        // ordinary AP, and posts addr2 rather than the BSSID: this is a
+        // device announcing itself to its own kind, not an access point
+        // offering a network, and its SSID is throwaway. Its name goes
+        // where the SSID would have.
+#if defined(TWATCH_S3) || defined(CYD_GPS)
+        // Wardriving: every access point, with its security read from the
+        // RSN and WPA elements.
+        if (Wardrive::enabled() && ieLen) {
+            const uint16_t cap = (uint16_t)(frame[34] | (frame[35] << 8));
+            Wardrive::noteWifi(frame + 16, ssid, WifiAuth::parse(cap, ies, ieLen), channel, rssi);
+        }
+#endif
+        char pwnName[33];
+        // A drone's WiFi Remote ID rides in its beacons as a vendor
+        // element (issue #15): posted as a drone, named by its serial
+        // when the pack carried its Basic ID.
+        RemoteId::Info rid;
+        if (ieLen && RemoteId::mergeBeacon(ies, ieLen, rid, 0)) {
+            g_engine->postWiFi(frame + 10, rssi, channel, rid.haveBasic ? rid.serial : "", false, false, true);
+        } else if (pwnagotchiName(frame, (uint32_t)(avail < sigLen ? avail : sigLen), pwnName, sizeof(pwnName))) {
+            g_engine->postWiFi(frame + 10, rssi, channel, pwnName, false, true);
+        } else {
+            g_engine->postWiFi(frame + 16, rssi, channel, ssid, enc);
+        }
+    } else if (type == 0 && (subtype == 12 || subtype == 10)) {
+        // Deauthentication, and disassociation, which the same tools
+        // send: addr2 (transmitter -- the attacker, or a spoofed AP
+        // address) at the same offset probe requests use above, and
+        // whether addr1 is the broadcast address, which is what a
+        // flood is usually aimed at. A single frame here is completely
+        // normal WiFi traffic (a phone disconnecting, an AP restarting);
+        // postDeauth()/processDeauthQ() is what actually decides
+        // whether a BURST of them is happening.
+        bool bcast = true;
+        for (int i = 4; i < 10; i++) if (frame[i] != 0xFF) { bcast = false; break; }
+        g_engine->postDeauth(frame + 10, rssi, channel, bcast);
+    }
+}
+
+#if SQW_WIFI_HOSTED
+// The frames the C6 forwarded since the last pass, into the parser above.
+// From loop(), so the parser runs on the loop task here where every other
+// board runs it on the WiFi task; the queues it posts to do not mind.
+static void drainHostedFrames() {
+    static Tab5Radio::Frame f;   // 608 bytes: not on the loop task's stack
+    for (uint8_t n = 0; n < 96 && Tab5Radio::next(f); n++)
+        onWifiFrame(f.data, f.sigLen, f.dataLen, f.rssi, f.channel);
+}
+#endif
 
 // -------- DetectionEngine --------
 
@@ -702,6 +872,24 @@ bool DetectionEngine::init() {
     // the step that might brown the board out -- because a brownout leaves no
     // crash dump and the reset reason alone does not say which of the two it
     // was. A board that boot-loops prints the last one it reached.
+#if SQW_WIFI_HOSTED
+    // The C6 over ESP-Hosted: power, link, hello, its WiFi driver, then the
+    // sniffer on channel 1 with the engine's own hop clock driving it
+    // (hopChannel sends each hop as a CMD_CHANNEL). A board whose link does
+    // not come up runs on without WiFi, and says so.
+    BOOT_STAGE(4);
+    Serial.println("[boot] starting WiFi: the C6 over ESP-Hosted");
+    serialFlush();
+    Serial.printf("[boot] heap before the link: %lu free, %lu largest\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    if (Tab5Radio::begin()) {
+        setSniffChannel(_wifiChannel);
+        sniffOn();
+        Serial.printf("[boot] heap with the link up: %lu free, %lu largest\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    } else {
+        Serial.println("[boot] no radio this boot: WiFi detections are off");
+    }
+    BOOT_STAGE(14);
+#else
 #if defined(TWATCH_S3)
     // Not on the watch. It has the heap to spare, and tearing the driver down
     // 50 ms after WiFi.mode() started it -- while the radio may still be
@@ -797,106 +985,11 @@ bool DetectionEngine::init() {
     filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
     esp_wifi_set_promiscuous_filter(&filter);
     esp_wifi_set_promiscuous_rx_cb([](void* buf, wifi_promiscuous_pkt_type_t) {
-        s_wifiRaw++;
-        if (!g_engine) return;
         const wifi_promiscuous_pkt_t* pkt = (const wifi_promiscuous_pkt_t*)buf;
-        {
-            const uint8_t ch = pkt->rx_ctrl.channel;
-            if (ch >= 1 && ch <= 13 && s_chanFrames[ch] < 0xFFFF) s_chanFrames[ch]++;
-#if SQW_WIFI_5G
-            else if (const uint8_t b = bit5(ch)) { if (s5Frames[b] < 0xFFFF) s5Frames[b]++; s5Frames24++; }
-#endif
-        }
-        if (pkt->rx_ctrl.sig_len < 24) return;
-        // 802.11 frame header: bytes 0..23 contain frame control, duration,
-        // addr1 (DA, offset 4), addr2 (SA, offset 10), addr3 (BSSID, offset 16)
-        const uint8_t* frame = pkt->payload;
-        uint8_t fc0 = frame[0];
-        uint8_t type  = (fc0 & 0x0C) >> 2;
-        uint8_t subtype = (fc0 & 0xF0) >> 4;
-        // Management frame probe request: type=0, subtype=4
-        if (type == 0 && subtype == 4) {
-            // addr2 (transmitter) is at offset 10
-            g_engine->postWiFi(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel);
-        } else if (type == 2) {
-            // Data frame: addr1 (DA) and addr2 (SA) both interesting
-            g_engine->postWiFi(frame + 4,  pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel);
-            g_engine->postWiFi(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel);
-        } else if (type == 0 && subtype == 8) {
-            // Beacon: fixed params (timestamp+interval+capability) run
-            // 12 bytes after the 24-byte header, then the SSID is the
-            // first information element — tag 0x00, 1-byte length,
-            // then up to 32 bytes of SSID (unescaped, not
-            // null-terminated in the frame itself).
-            char ssid[33] = {0};
-            uint32_t sigLen = pkt->rx_ctrl.sig_len;
-            if (sigLen > 37) {
-                const uint8_t* ie = frame + 36;
-                if (ie[0] == 0x00) {
-                    uint8_t ssidLen = ie[1];
-                    if (ssidLen > 32) ssidLen = 32;
-                    if (36 + 2 + ssidLen <= sigLen) {
-                        memcpy(ssid, ie + 2, ssidLen);
-                        ssid[ssidLen] = 0;
-                    }
-                }
-            }
-            // Capability info is the last 2 bytes of the 12-byte fixed
-            // parameter block following the 24-byte header, so offset
-            // 34. Bit 4 (0x10) is Privacy: set means this BSS requires
-            // encryption. That one bit is what separates a mesh node
-            // from an evil twin -- see noteApBeacon().
-            bool enc = (sigLen > 35) && ((frame[34] & 0x10) != 0);
-            // A pwnagotchi's beacon is checked before it is treated as an
-            // ordinary AP, and posts addr2 rather than the BSSID: this is a
-            // device announcing itself to its own kind, not an access point
-            // offering a network, and its SSID is throwaway. Its name goes
-            // where the SSID would have.
-#if defined(TWATCH_S3)
-            // Wardriving: every access point, with its security read from the
-            // RSN and WPA elements (the last four bytes are the FCS).
-            if (Wardrive::enabled() && sigLen > 40) {
-                const uint16_t cap = (uint16_t)(frame[34] | (frame[35] << 8));
-                Wardrive::noteWifi(frame + 16, ssid, WifiAuth::parse(cap, frame + 36, (uint16_t)(sigLen - 40)),
-                                   pkt->rx_ctrl.channel, (int8_t)pkt->rx_ctrl.rssi);
-            }
-#elif defined(CYD_GPS)
-            // Wardriving on the CYD GPS builds: the same call as the watch.
-            if (Wardrive::enabled() && sigLen > 40) {
-                const uint16_t cap = (uint16_t)(frame[34] | (frame[35] << 8));
-                Wardrive::noteWifi(frame + 16, ssid, WifiAuth::parse(cap, frame + 36, (uint16_t)(sigLen - 40)),
-                                   pkt->rx_ctrl.channel, (int8_t)pkt->rx_ctrl.rssi);
-            }
-#endif
-            char pwnName[33];
-            // A drone's WiFi Remote ID rides in its beacons as a vendor
-            // element (issue #15): posted as a drone, named by its serial
-            // when the pack carried its Basic ID. The last four bytes of
-            // sig_len are the frame check sequence, not elements.
-            RemoteId::Info rid;
-            if (sigLen > 40 && RemoteId::mergeBeacon(frame + 36, (uint16_t)(sigLen - 40), rid, 0)) {
-                g_engine->postWiFi(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel,
-                                   rid.haveBasic ? rid.serial : "", false, false, true);
-            } else if (pwnagotchiName(frame, sigLen, pwnName, sizeof(pwnName))) {
-                g_engine->postWiFi(frame + 10, pkt->rx_ctrl.rssi,
-                                   pkt->rx_ctrl.channel, pwnName, false, true);
-            } else {
-                g_engine->postWiFi(frame + 16, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel, ssid, enc);
-            }
-        } else if (type == 0 && (subtype == 12 || subtype == 10)) {
-            // Deauthentication, and disassociation, which the same tools
-            // send: addr2 (transmitter -- the attacker, or a spoofed AP
-            // address) at the same offset probe requests use above, and
-            // whether addr1 is the broadcast address, which is what a
-            // flood is usually aimed at. A single frame here is completely
-            // normal WiFi traffic (a phone disconnecting, an AP restarting);
-            // postDeauth()/processDeauthQ() is what actually decides
-            // whether a BURST of them is happening.
-            bool bcast = true;
-            for (int i = 4; i < 10; i++) if (frame[i] != 0xFF) { bcast = false; break; }
-            g_engine->postDeauth(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel, bcast);
-        }
+        onWifiFrame(pkt->payload, pkt->rx_ctrl.sig_len, pkt->rx_ctrl.sig_len, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel);
     });
+
+#endif  // SQW_WIFI_HOSTED
 
     // 3. NimBLE scan — onResult() fires live per-advertisement via
     // g_bleScanCallbacks (see above), not via a scan-complete callback
@@ -908,6 +1001,7 @@ bool DetectionEngine::init() {
     s_bootHeap.wifiLargest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     Serial.printf("[boot] heap with WiFi up: %lu free, %lu largest\n",
                   (unsigned long)s_bootHeap.wifiFree, (unsigned long)s_bootHeap.wifiLargest);
+#if SQW_BLE
     BOOT_STAGE(5);
     Serial.println("[boot] starting Bluetooth");
     serialFlush();
@@ -970,6 +1064,16 @@ bool DetectionEngine::init() {
         // taken it over. The v1.0 implementation is BLE-only for skimmers
         // (advertised name match). Documented in docs/DETECTIONS.md.
     }
+
+#else
+    // Not yet: the C6's Bluetooth controller is reached over the same link,
+    // through its HCI, and that is a later round.
+    BOOT_STAGE(5);
+    Serial.println("[boot] Bluetooth: not driven on this board yet");
+    BOOT_STAGE(7);
+    s_bootHeap.bleFree    = ESP.getFreeHeap();
+    s_bootHeap.bleLargest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+#endif  // SQW_BLE
 
     // 5. SD card (best-effort), now that the radios have what they need.
     _sd.begin();
@@ -1038,7 +1142,7 @@ Stats stats() {
 } // namespace MeshProbe
 #endif
 
-#if SQUACH_MESH
+#if SQUACH_MESH && SQW_BLE
 #include "meshmsg.h"
 #include "meshtalk.h"
 #include "mesh_airtime.h"
@@ -1254,6 +1358,7 @@ void stopAdvertisingForUpdate() { setAdvertising(false, 0); }
 } // namespace Mesh
 #endif
 
+#if SQW_BLE
 // ---- the scan-result flush --------------------------------------------------
 // The scan is restarted once a minute. Under the old library this was the
 // only thing that ever freed a record for a device that never answered a
@@ -1437,6 +1542,18 @@ static void scanFlushTick() {
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_flushEv);
 }
 
+#else
+// No Bluetooth scan to flush or to switch between active and passive: the
+// loop's share of that is a heap check, and the numbers read elsewhere are
+// zero.
+bool scanPassiveNow()           { return true; }
+ScanFlushStats scanFlushStats() { return ScanFlushStats{ 0, 0, 0 }; }
+uint32_t advertRate()           { return 0; }
+static void scanFlushTick() {
+    s_heapLow = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 1536;
+}
+#endif  // SQW_BLE
+
 void DetectionEngine::loop() {
     // Resting radios still take the BLE side of the loop when BLE is up;
     // only the WiFi steps below are skipped, since WiFi is stopped.
@@ -1453,6 +1570,9 @@ void DetectionEngine::loop() {
     // never restarted out from under it.
     scanFlushTick();
     if (g_rawMode != RawScanMode::REST) {
+#if SQW_WIFI_HOSTED
+        drainHostedFrames();
+#endif
         hopChannel();
         processWiFiQ();
         processDeauthQ();
@@ -1548,7 +1668,7 @@ void DetectionEngine::hopChannel() {
     }
     _dwellMs = (uint16_t)(3900u * mine / total);
     if (_dwellMs < 120) _dwellMs = 120;
-    esp_wifi_set_channel(_wifiChannel, WIFI_SECOND_CHAN_NONE);
+    setSniffChannel(_wifiChannel);
 }
 
 #if SQW_WIFI_5G
@@ -1877,7 +1997,7 @@ void DetectionEngine::postRawBle(RawBleResult r) {
 }
 
 void DetectionEngine::startRawBleScan() {
-    if (g_rawMode == RawScanMode::WIFI) WiFi.scanDelete();
+    if (g_rawMode == RawScanMode::WIFI) rawScanDelete();
     _rawBleCount = 0;
     // The continuous NimBLE scan (started once, forever, in init())
     // keeps running -- onResult() just routes into postRawBle() above
@@ -1885,7 +2005,7 @@ void DetectionEngine::startRawBleScan() {
     // promiscuous capture is switched off so the radio is focused on
     // BLE for the duration, per the "pause the continuous scan and
     // focus on what we're scanning for" design.
-    esp_wifi_set_promiscuous(false);
+    sniffOff();
     g_rawMode = RawScanMode::BLE;
     g_rawBleStartMs = millis();
 }
@@ -1899,6 +2019,22 @@ const RawBleResult* DetectionEngine::rawBleAt(uint8_t idx) const {
     return &_rawBle[idx];
 }
 
+#if SQW_WIFI_HOSTED
+// The driver's own network scan is not on the link yet: a WIFI sweep on the
+// Tab5 finishes at once with nothing to show.
+void DetectionEngine::startRawWifiScan() {
+    g_rawMode = RawScanMode::WIFI;
+    sniffOff();
+}
+bool DetectionEngine::rawWifiScanDone() const { return g_rawMode == RawScanMode::WIFI; }
+uint8_t DetectionEngine::rawWifiCount() const { return 0; }
+const char* DetectionEngine::rawWifiSsid(uint8_t) const { return ""; }
+int8_t DetectionEngine::rawWifiRssi(uint8_t) const { return 0; }
+uint8_t DetectionEngine::rawWifiChannel(uint8_t) const { return 0; }
+bool DetectionEngine::rawWifiOpen(uint8_t) const { return false; }
+const uint8_t* DetectionEngine::rawWifiBssid(uint8_t) const { return nullptr; }
+
+#else
 void DetectionEngine::startRawWifiScan() {
     // Gate the BLE callback off first (it'd otherwise still be live
     // during the scan) before touching the radio.
@@ -1949,12 +2085,15 @@ const uint8_t* DetectionEngine::rawWifiBssid(uint8_t idx) const {
     return WiFi.BSSID(idx);
 }
 
+#endif  // SQW_WIFI_HOSTED
+
 void DetectionEngine::stopRawScan() {
-    if (g_rawMode == RawScanMode::WIFI) WiFi.scanDelete();
+    if (g_rawMode == RawScanMode::WIFI) rawScanDelete();
     g_rawMode = RawScanMode::NONE;
-    esp_wifi_set_promiscuous(true);
+    sniffOn();
 }
 
+#if SQW_BLE
 // ---- Bluetooth update mode --------------------------------------------------
 // The scan stops and starts ON THE HOST TASK, for the reason spelled out above
 // scanFlushOnHost(): the host hands its records to the scan callbacks on the
@@ -2036,6 +2175,40 @@ void DetectionEngine::wakeRadios() {
     if (g_restBle && s_updEvReady) ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &s_updStartEv);
     g_restBle = false;
 }
+
+#else
+// No Bluetooth to stop or start: an update owns the radio by switching the
+// sniffer off, and a rest is the sniffer off until the wake.
+void DetectionEngine::startUpdateRadio() {
+    if (g_rawMode == RawScanMode::WIFI) rawScanDelete();
+    g_rawMode = RawScanMode::UPDATE;
+    sniffOff();
+}
+
+void DetectionEngine::stopUpdateRadio() {
+    if (g_rawMode != RawScanMode::UPDATE) return;
+    g_rawMode = RawScanMode::NONE;
+    sniffOn();
+}
+
+bool DetectionEngine::restRadios(bool bleToo) {
+    if (g_rawMode != RawScanMode::NONE) return false;
+    g_rawMode = RawScanMode::REST;
+    g_restBle = bleToo;
+    sniffOff();
+    return true;
+}
+
+void DetectionEngine::wakeRadios() {
+    if (g_rawMode != RawScanMode::REST) return;
+    g_rawMode = RawScanMode::NONE;
+    setSniffChannel(_wifiChannel);
+    sniffOn();
+    _lastHopMs = millis();                       // the visit starts now, not before the rest
+    s_chanFrames[_wifiChannel] = 0;
+    g_restBle = false;
+}
+#endif  // SQW_BLE
 
 bool DetectionEngine::radiosResting() { return g_rawMode == RawScanMode::REST; }
 
@@ -2393,6 +2566,14 @@ void DetectionEngine::pushLog(const Detection& d) {
     if (d.channel > 14)
         Serial.printf("[5g] new %s %02x:%02x:%02x:%02x:%02x:%02x on ch %u, %d dBm\n", detectionTypeName(d.type),
                       d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5], (unsigned)d.channel, (int)d.rssi);
+#endif
+#if SQW_WIFI_HOSTED
+    // Every new row, on the console: this board's rows all come from loop()
+    // (the C6's frames are parsed there), never from a radio task, so the
+    // print costs nothing that matters. The bench matches shots to catches
+    // by these lines.
+    Serial.printf("[det] new %s %02x:%02x:%02x:%02x:%02x:%02x on ch %u, %d dBm\n", detectionTypeName(d.type),
+                  d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5], (unsigned)d.channel, (int)d.rssi);
 #endif
     _lifetimeTotal++;
     if ((uint8_t)d.type < (uint8_t)DetectionType::COUNT) _lifetimeByType[(uint8_t)d.type]++;

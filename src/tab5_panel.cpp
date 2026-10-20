@@ -36,6 +36,14 @@ bool begin() {
         return false;
     }
     s_up = true;
+    // The radio's power switch is bit 0 of the second expander's output
+    // register, and M5GFX's init leaves it ON. Off here, so the ESP32-C6
+    // starts fresh when Tab5Radio::begin() powers it, and draws nothing until
+    // then. A P4 reset alone does not reset the C6: after a brownout
+    // (2026-10-19, on a hub port) it kept sniffing through every reboot and
+    // each boot browned out sooner, during this very init.
+    if (!lgfx::i2c::bitOff(1, 0x44, 0x05, 1u << 0, 100000).has_value())
+        Serial.println("[tab5] the radio's power bit would not clear");
     Serial.printf("[tab5] panel up: %dx%d rot %d, framebuffer %p (%u B/line), touch %s\n",
                   (int)s_gfx.width(), (int)s_gfx.height(), (int)s_gfx.getRotation(), s_fb,
                   (unsigned)s_lineBytes, s_gfx.touch() ? "yes" : "NO");

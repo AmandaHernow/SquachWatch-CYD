@@ -1,38 +1,43 @@
-// SquachWatch-CYD — the radio half of the firmware, stood in for on the Tab5.
+// SquachWatch-CYD — what the Tab5 build does not have yet, stood in for.
 //
 // The ESP32-P4 has no radio of its own; the Tab5's ESP32-C6 hangs off SDIO
-// and is not driven this round. So the four files that include NimBLE, WiFi
-// or SD (detection.cpp, sd_log.cpp, ota_ble.cpp, ota_wifi.cpp) are left out
-// of [env:tab5] (its build_src_filter) and this file supplies what they
-// would have: the emulator's own stand-in for the detection engine and the
-// SD log, unchanged, plus an OtaBle/OtaWifi that say "not available".
+// and src/tab5_radio.cpp drives its WiFi sniffer into the real detection
+// engine (detection.cpp builds on this board with its Bluetooth half
+// compiled out). Three things are still not driven and their files are out
+// of [env:tab5] (its build_src_filter): the SD card (sd_log.cpp), a
+// Bluetooth update (ota_ble.cpp) and a WiFi connection for an update
+// (ota_wifi.cpp). This file supplies what they would have, the way the
+// emulator's sim/detection_sim.cpp and sim/ota_sim.cpp do, plus the Mesh
+// radio half that lives in detection.cpp's Bluetooth section everywhere else.
 //
-// When the C6 is driven, this file goes and those four come back.
+// When the C6's Bluetooth is driven, the Mesh stubs go; when its WiFi
+// connection is, OtaWifi's do.
 #if defined(TAB5)
 
-// The emulator's engine: same class from the same header, in-memory data, no
-// radio. Included rather than copied so the two can never drift.
-#include "../sim/detection_sim.cpp"
-
+#include "detection.h"
 #include "ota_ble.h"
 #include "ota_wifi.h"
 #include <Arduino.h>
 #include <string.h>
 
-// ---- What the emulator gets from main_live.cpp / meshsim.cpp -------------
-// The radio is never asleep because there is none; the mesh never
-// advertises; the RADIO console command says so.
-bool DetectionEngine::restRadios(bool) { return false; }
-void DetectionEngine::wakeRadios() {}
-void radioReport(bool) { Serial.println("[radio] none on this board: the Tab5's ESP32-C6 is not driven yet"); }
+// ---- SdLog: no card driven on this board yet ------------------------------
+bool SdLog::begin() { _ready = false; return false; }
+void SdLog::logEvent(const Detection&) {}
+void SdLog::tick() {}
+void SdLog::wipe() {}
+void SdLog::openDaily() {}
+
+// ---- Mesh's radio half: nothing transmits, nothing is advertising ---------
 #if SQUACH_MESH
 namespace Mesh {
+bool     advertising() { return false; }
 TxStatus txStatus() { return TxStatus{ false, false, 0, 0, 0 }; }
-void radioTick(uint32_t) {}
+void     radioTick(uint32_t) {}
+void     stopAdvertisingForUpdate() {}
 }
 #endif
 
-// ---- OtaBle: no Bluetooth on this board ------------------------------------
+// ---- OtaBle: no Bluetooth on this board yet --------------------------------
 namespace OtaBle {
 bool        available()     { return false; }
 bool        begin()         { return false; }
@@ -43,12 +48,12 @@ bool        codeAccepted()  { return false; }
 uint8_t     percent()       { return 0; }
 uint32_t    bytesReceived() { return 0; }
 uint32_t    bytesExpected() { return 0; }
-const char* failureText()   { return "No Bluetooth on this board."; }
+const char* failureText()   { return "No Bluetooth on this board yet."; }
 const char* deviceName()    { return "SquachWatch"; }
 uint32_t    pairingCode()   { return 0; }
 }  // namespace OtaBle
 
-// ---- OtaWifi: no WiFi on this board (yet) ----------------------------------
+// ---- OtaWifi: no WiFi connection on this board yet -------------------------
 namespace OtaWifi {
 static State s_state = State::OFF;
 bool        begin()               { s_state = State::FAILED; return false; }
@@ -70,7 +75,7 @@ bool        saveNetwork(const char*, const char*) { return false; }
 void        removeSaved(uint8_t)  {}
 void        useSaved(uint8_t)     {}
 void        connectSavedAt(uint8_t) {}
-void        printSaved()          { Serial.println("[wifi] no radio on this board"); }
+void        printSaved()          { Serial.println("[wifi] no WiFi connection on this board yet"); }
 void        connect(const char*, const char*, bool) { s_state = State::FAILED; }
 void        connectSaved()        { s_state = State::FAILED; }
 bool        bootCheck(uint32_t)   { return false; }
@@ -83,7 +88,7 @@ void        tryAgain()            {}
 uint8_t     percent()             { return 0; }
 uint32_t    bytesReceived()       { return 0; }
 uint32_t    bytesExpected()       { return 0; }
-const char* failureText()         { return "No WiFi on this board yet: the Tab5's radio is not driven."; }
+const char* failureText()         { return "No WiFi update on this board yet: the Tab5's radio sniffs, it does not connect."; }
 }  // namespace OtaWifi
 
 #endif  // TAB5

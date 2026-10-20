@@ -4492,6 +4492,9 @@ void setup() {
     usingCapTouch = Tab5Panel::up() && Tab5Panel::hasTouch();
     Serial.println(usingCapTouch ? "Tab5 -- ST7123 touch through M5GFX."
                                  : "Tab5 -- no touch controller; no touch.");
+    // Spelled out, because a brownout here looked like a lock-up on the
+    // console until the reset reason was read (2026-10-19).
+    Serial.printf("[power] boot: %s (esp_reset_reason %d)\n", resetReasonName(), (int)esp_reset_reason());
 #elif defined(CYD32C) || defined(CYD35C)
     // The GT911, on the CYD's capacitive I2C pins. Raw panel pixels in the
     // panel's own portrait frame, so the five-target calibration maps them
