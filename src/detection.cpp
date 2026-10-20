@@ -508,6 +508,30 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
             label    = uuidName(0xFFFA);
         }
 
+        // Axon's body-cam tag, "BWCDEVICE": the strongest Axon signature there
+        // is, and independent of the address, which Axon randomises.
+        const uint8_t* raw = adv->getPayload().data();
+        const uint8_t rawLen = (uint8_t)adv->getPayload().size();
+        if (det.type == DetectionType::UNKNOWN && isAxonBwcPayload(raw, rawLen)) {
+            det.type = DetectionType::AXON;
+            label    = "Axon-BWC";
+        }
+        // Google's Find Hub trackers (Moto Tag, Chipolo Point, Pebblebee,
+        // eufy and the rest): FMDN's own frame types, which an Eddystone shop
+        // beacon on the same UUID never sends.
+        if (det.type == DetectionType::UNKNOWN && isFmdnPayload(raw, rawLen)) {
+            det.type = DetectionType::GOOGLE_TAG;
+            label    = "FindHub";
+        }
+        // A known UUID carried as service data rather than in the UUID list --
+        // how most trackers (Tile, the DULT standard) actually advertise.
+        if (det.type == DetectionType::UNKNOWN) {
+            if (const uint16_t u = serviceDataUuid(raw, rawLen)) {
+                det.type = lookupUuid(u);
+                label    = uuidName(u);
+            }
+        }
+
         // Service UUIDs
         if (det.type == DetectionType::UNKNOWN && adv->haveServiceUUID()) {
             for (int j = 0; j < adv->getServiceUUIDCount(); j++) {
@@ -517,18 +541,13 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
                 // NimBLE-Arduino versions). The equals() method is
                 // a stable API and compares the logical 16-bit value.
                 if (u.bitSize() == 16) {
-                    static const uint16_t kKnown16[] = {
-                        0x1101,  // SPP — skimmer
-                        0xFEED,  // Tile tracker
-                        0xFEEC,  // Tile tracker (second SIG-assigned UUID)
-                        0xFD5F,  // Ray-Ban Meta glasses
-                        0x3100, 0x3200, 0x3300, 0x3400, 0x3500,  // Raven
-                        0xFFFA,  // OpenDroneID
-                        0xFD5A,  // Samsung SmartTag
-                        0xFEAA,  // Google Find My Device Network (Eddystone)
-                        0x3081, 0x3082, 0x3083,  // Flipper Zero, one per case colour
-                    };
-                    for (uint16_t k : kKnown16) {
+                    // The signature table itself, not a hand-kept copy of it
+                    // (the copy had already drifted once). 0xFEAA is the one
+                    // exception: as a listed UUID it is any Eddystone beacon,
+                    // so Find Hub is matched on its frame type above instead.
+                    for (uint16_t i = 0; i < kUuidCount; i++) {
+                        const uint16_t k = kUuidTable[i].uuid;
+                        if (k == 0xFEAA) continue;
                         if (u.equals(NimBLEUUID((uint16_t)k))) {
                             det.type = lookupUuid(k);
                             label    = uuidName(k);
@@ -567,8 +586,8 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
         det.conf = confidenceFor(det.type);
         // ...except HACKER, which is the one type deliberately holding
         // signatures of very different strength. Reaching here on anything
-        // but the name means one of the exact ones matched: a service UUID
-        // that exists on no other product, or Flipper's own SIG company ID.
+        // but the name means the exact one matched: a Flipper Zero service
+        // UUID, which exists on no other product.
         // Arriving on the name alone means somebody's BLE device is called
         // "Flipper", which is a string, not a signature.
         if (det.type == DetectionType::HACKER) {
@@ -607,15 +626,18 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
         } else if (det.type == DetectionType::SAMSUNG_TAG) {
             det.vendor = "Samsung";
         } else if (det.type == DetectionType::GOOGLE_TAG) {
-            det.vendor = "Google";
+            // Find Hub, DULT or Chipolo: whichever row matched.
+            det.vendor = label ? label : "Google";
         } else if (det.type == DetectionType::TILE) {
             det.vendor = "Tile";
+        } else if (det.type == DetectionType::AXON) {
+            // The tag, a service UUID, the company ID, or a name.
+            det.vendor = label ? label : (strcasestr(det.name, "BodyWorn") ? "BodyWorn" : "Axon");
         } else if (det.type == DetectionType::IBEACON) {
             det.vendor = "iBeacon";
         } else if (det.type == DetectionType::HACKER) {
             // Everything that reaches HACKER over BLE is a Flipper: the
-            // three service UUIDs, the company ID and the name prefix are
-            // all theirs. The Pineapple and the deauther arrive over WiFi
+            // three service UUIDs and the name prefix are both theirs. The Pineapple and the deauther arrive over WiFi
             // and are labelled in processWiFiQ().
             det.vendor = "Flipper";
         } else if (det.type == DetectionType::SKIMMER && label) {
@@ -861,14 +883,18 @@ bool DetectionEngine::init() {
             } else {
                 g_engine->postWiFi(frame + 16, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel, ssid, enc);
             }
-        } else if (type == 0 && subtype == 12) {
-            // Deauthentication: addr2 (transmitter -- the attacker, or
-            // a spoofed AP address) at the same offset probe requests
-            // use above. A single frame here is completely normal
-            // WiFi traffic (a phone disconnecting, an AP restarting);
+        } else if (type == 0 && (subtype == 12 || subtype == 10)) {
+            // Deauthentication, and disassociation, which the same tools
+            // send: addr2 (transmitter -- the attacker, or a spoofed AP
+            // address) at the same offset probe requests use above, and
+            // whether addr1 is the broadcast address, which is what a
+            // flood is usually aimed at. A single frame here is completely
+            // normal WiFi traffic (a phone disconnecting, an AP restarting);
             // postDeauth()/processDeauthQ() is what actually decides
             // whether a BURST of them is happening.
-            g_engine->postDeauth(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel);
+            bool bcast = true;
+            for (int i = 4; i < 10; i++) if (frame[i] != 0xFF) { bcast = false; break; }
+            g_engine->postDeauth(frame + 10, pkt->rx_ctrl.rssi, pkt->rx_ctrl.channel, bcast);
         }
     });
 
@@ -1635,7 +1661,7 @@ void IRAM_ATTR DetectionEngine::postWiFi(const uint8_t* mac, int8_t rssi, uint8_
     _wifiQHead = next;
 }
 
-void IRAM_ATTR DetectionEngine::postDeauth(const uint8_t* mac, int8_t rssi, uint8_t channel) {
+void IRAM_ATTR DetectionEngine::postDeauth(const uint8_t* mac, int8_t rssi, uint8_t channel, bool bcast) {
     if (!mac) return;
     uint8_t next = (_deauthQHead + 1) % DEAUTH_Q_CAP;
     if (next == _deauthQTail) return;           // queue full, drop
@@ -1643,6 +1669,7 @@ void IRAM_ATTR DetectionEngine::postDeauth(const uint8_t* mac, int8_t rssi, uint
     memcpy((void*)e.mac, mac, 6);
     e.rssi    = rssi;
     e.channel = channel;
+    e.bcast   = bcast;
     _deauthQHead = next;
 }
 
@@ -1657,20 +1684,33 @@ void DetectionEngine::processDeauthQ() {
         }
 
         uint32_t now = millis();
-        // Rolling window: resets after a gap longer than the window
-        // itself rather than a fixed calendar-aligned interval, so an
-        // isolated frame (normal traffic) never counts toward a burst
-        // that happened long before or after it.
-        if (now - _deauthWinStart > DEAUTH_WINDOW_MS) {
-            _deauthWinStart = now;
-            _deauthWinCount = 0;
+        // This sender's rolling window: resets after a gap longer than the
+        // window itself, so an isolated frame (normal traffic) never counts
+        // toward a burst that happened long before or after it. A sender
+        // not seen before takes the slot whose window is oldest.
+        DeauthSender* s = nullptr;
+        for (uint8_t i = 0; i < DEAUTH_SENDERS; i++)
+            if (memcmp(_deauthSenders[i].mac, e.mac, 6) == 0) { s = &_deauthSenders[i]; break; }
+        if (!s) {
+            s = &_deauthSenders[0];
+            for (uint8_t i = 1; i < DEAUTH_SENDERS; i++)
+                if (_deauthSenders[i].winStart < s->winStart) s = &_deauthSenders[i];
+            memcpy(s->mac, e.mac, 6);
+            s->winStart = now; s->count = 0; s->bcastCount = 0;
         }
-        _deauthWinCount++;
+        if (now - s->winStart > DEAUTH_WINDOW_MS) {
+            s->winStart = now;
+            s->count = 0; s->bcastCount = 0;
+        }
+        if (s->count < 255) s->count++;
+        if (e.bcast && s->bcastCount < 255) s->bcastCount++;
+        const uint8_t burst = s->count;
 
         // Window/cooldown bookkeeping above still runs even while
         // disabled, so re-enabling doesn't instantly fire off a stale
         // accumulated count -- only the actual recording is gated.
-        if (_deauthWinCount >= DEAUTH_THRESHOLD && (now - _deauthLastFireMs) > DEAUTH_COOLDOWN_MS &&
+        if ((s->count >= DEAUTH_THRESHOLD || s->bcastCount >= DEAUTH_BCAST) &&
+            (now - _deauthLastFireMs) > DEAUTH_COOLDOWN_MS &&
             Settings::typeEnabled(DetectionType::DEAUTH)) {
             _deauthLastFireMs = now;
             Detection d;
@@ -1687,7 +1727,7 @@ void DetectionEngine::processDeauthQ() {
             // type uses it for -- there's no single persistent device
             // identity behind a flood the way there is for a tracker
             // or camera.
-            d.hits   = _deauthWinCount;
+            d.hits   = burst;
             d.active = true;
             // A second flood from the same source is the same attacker, so
             // it lands on the row the first one made -- it used to push a
@@ -1701,7 +1741,7 @@ void DetectionEngine::processDeauthQ() {
                 row.prevRssi  = row.rssi;
                 row.rssi      = e.rssi;
                 row.channel   = e.channel;
-                row.hits      = _deauthWinCount;
+                row.hits      = burst;
                 row.lastSeen  = now;
                 row.firstSeen = now;
                 row.restored  = 0;

@@ -253,6 +253,7 @@ namespace Squachy {
     // he is earned, like the other two.
     bool meatyUnlocked();
     void unlockMeaty(const char* why);
+    void relockMeaty();      // the bench's MEATY LOCK: earn him again
     const char* takeMeatyIntro();
     // The ball and chain, as a pet: earned by serving a whole sentence. Out
     // of custody he still sits chained to the ankle and still stops a throw
@@ -409,6 +410,9 @@ namespace Squachy {
     // How tall his speech bubble comes out for `text` on this panel, wrapped
     // as drawn: for a screen that has to leave room for it (the boot splash).
     int bubbleHeight(TFT_eSPI& t, const char* text);
+    // His bubble saying `text`, centred on cx with its top at topY, no tail:
+    // the FONTS page's preview.
+    void drawSampleBubble(TFT_eSPI& t, int cx, int topY, const char* text);
     // While on, his bubble keeps the 2.8"'s text size on the big panels too.
     // Set around one draw and cleared after, like the previews.
     void setBubbleSmall(bool on);

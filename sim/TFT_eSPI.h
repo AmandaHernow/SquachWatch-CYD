@@ -237,6 +237,26 @@ public:
         }
         return GLCD_ADVANCE * textsize;
     }
+    // The library's other drawChar: one GLCD glyph at (x, y) in `color` over
+    // `bg`, at `size`, leaving the text colour, size and cursor alone. As in
+    // real TFT_eSPI, a bg equal to the colour means NO background -- only the
+    // glyph's own pixels land, and the blank sixth column is not painted.
+    // The LORA page's chat rain draws its glyphs this way.
+    void drawChar(int32_t x, int32_t y, uint16_t c, uint32_t color, uint32_t bg, uint8_t size) {
+        if (c > 255) return;
+        if (size < 1) size = 1;
+        const bool fillbg = bg != color;
+        for (int col = 0; col < (fillbg ? GLCD_ADVANCE : GLCD_W); col++) {
+            const uint8_t bits = (col >= GLCD_W) ? 0x00 : font[(size_t)c * GLCD_W + col];
+            for (int row = 0; row < GLCD_H; row++) {
+                const bool on = (bits >> row) & 1;
+                if (!on && !fillbg) continue;
+                const uint32_t c565 = on ? color : bg;
+                if (size == 1) drawPixel(x + col, y + row, c565);
+                else           fillRect(x + col * size, y + row * size, size, size, c565);
+            }
+        }
+    }
 
     // ---- shape primitives, built on the virtuals above (same split
     // real TFT_eSPI uses) ------------------------------------------
@@ -382,6 +402,8 @@ public:
 
     // ---- text ------------------------------------------------------
     void setCursor(int32_t x, int32_t y) { cursor_x = x; cursor_y = y; }
+    int16_t getCursorX() const { return (int16_t)cursor_x; }
+    int16_t getCursorY() const { return (int16_t)cursor_y; }
     void setTextColor(uint16_t fg) { textcolor = fg; textbgcolor = fg; transparent = true; }
     void setTextColor(uint16_t fg, uint16_t bg) { textcolor = fg; textbgcolor = bg; transparent = false; }
     void setTextSize(uint8_t s) { textsize = s ? s : 1; }

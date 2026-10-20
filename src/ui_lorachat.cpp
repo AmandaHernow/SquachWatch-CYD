@@ -12,6 +12,9 @@
 #include "settings.h"
 #include "theme.h"
 #include "privacy.h"
+#if defined(TDECK_PLUS)
+#include "squachy.h"    // the nickname, for what MeshCore shows before the colon
+#endif
 #include <Arduino.h>
 #include <string.h>
 
@@ -38,6 +41,14 @@ uint16_t       s_count[2] = { 0, 0 };
 uint32_t       s_seenTotal = 0;
 
 const int TAB_H = 22;
+#if defined(TDECK_PLUS)
+// The compose line: what is typed, and a short status in its place after Enter.
+const int COMPOSE_H = 22;
+char     s_compose[161] = { 0 };
+uint8_t  s_composeN = 0;
+char     s_status[40] = { 0 };
+uint32_t s_statusAt = 0;
+#endif
 
 Lora::Proto tabProto(uint8_t t) { return t ? Lora::Proto::MESHCORE : Lora::Proto::MESHTASTIC; }
 
@@ -121,6 +132,35 @@ const char* listenLine() {
     }
 }
 
+#if defined(TDECK_PLUS)
+// The compose line, above the BACK bar: the typed text with a cursor, the
+// tail of it when it is longer than the line; a status for a moment after
+// Enter; the way to switch it on when LORA TX is off.
+void drawCompose(TFT_eSPI& t, int w, int y, uint32_t now) {
+    const uint16_t accent = s_tab ? Theme::PINK : Theme::CYAN;
+    t.fillRoundRect(4, y, w - 8, COMPOSE_H, 4, Theme::blend(Theme::BG, Theme::WHITE, 18));
+    t.drawRoundRect(4, y, w - 8, COMPOSE_H, 4, Theme::blend(Theme::BG, accent, 150));
+    t.setTextSize(1);
+    const int ty = y + (COMPOSE_H - t.fontHeight()) / 2;
+    if (s_status[0] && now - s_statusAt < 2500) {
+        t.setTextColor(Theme::VAPOR_YELLOW, Theme::blend(Theme::BG, Theme::WHITE, 18));
+        t.setCursor(10, ty); t.print(s_status);
+        return;
+    }
+    if (!Settings::loraTxDbm() && !s_composeN) {
+        t.setTextColor(Theme::blend(Theme::BG, Theme::WHITE, 120), Theme::blend(Theme::BG, Theme::WHITE, 18));
+        t.setCursor(10, ty); t.print("TYPE HERE  (LORA TX IS OFF: SETTINGS > LORA)");
+        return;
+    }
+    char line[168];
+    snprintf(line, sizeof line, "%s_", s_compose);
+    const char* p = line;
+    while (*p && t.textWidth(p) > w - 20) p++;           // the tail that fits
+    t.setTextColor(Theme::WHITE, Theme::blend(Theme::BG, Theme::WHITE, 18));
+    t.setCursor(10, ty); t.print(p);
+}
+#endif
+
 }  // namespace
 
 void uiLoraChatInit(TFT_eSPI& t) {
@@ -150,7 +190,11 @@ void uiLoraChatTick(TFT_eSPI& t, uint32_t now) {
     refresh();
     s_seenTotal = ringTotal();   // looking at it is reading it
     const int w = t.width(), h = t.height();
-    const int bodyBottom = h - Theme::pinnedBackH(w) - 2;
+    int bodyBottom = h - Theme::pinnedBackH(w) - 2;
+#if defined(TDECK_PLUS)
+    bodyBottom -= COMPOSE_H + 4;
+    drawCompose(t, w, bodyBottom + 2, now);
+#endif
     t.fillRect(0, 0, w, bodyBottom, Theme::BG);
 
     // The two tabs, the open one filled.
@@ -217,6 +261,29 @@ void uiLoraChatTick(TFT_eSPI& t, uint32_t now) {
     }
     Theme::drawPinnedBack(t, "[ BACK ]");
 }
+
+#if defined(TDECK_PLUS)
+void uiLoraChatKey(char c, uint32_t now) {
+    if (c == '\b') { if (s_composeN) s_compose[--s_composeN] = '\0'; return; }
+    if (c == '\n') {
+        if (!s_composeN) return;
+        if (!Settings::loraTxDbm()) { snprintf(s_status, sizeof s_status, "LORA TX IS OFF: SETTINGS > LORA"); s_statusAt = now; return; }
+        const char* nick = Squachy::nickname();
+        if (!nick || !*nick) nick = "SQUACHY";
+        snprintf(s_status, sizeof s_status, "SENDING...");
+        const bool ok = Lora::sendText(tabProto(s_tab), nick, s_compose, (int8_t)Settings::loraTxDbm());
+        snprintf(s_status, sizeof s_status, ok ? "SENT" : "SEND FAILED");
+        s_statusAt = now;
+        if (ok) { s_composeN = 0; s_compose[0] = '\0'; s_sig = 0xFFFFFFFFu; }
+        return;
+    }
+    if (c < 32 || c > 126) return;
+    const uint8_t cap = s_tab ? 120 : 160;      // MeshCore's text is shorter
+    if (s_composeN < cap) { s_compose[s_composeN++] = c; s_compose[s_composeN] = '\0'; }
+}
+#else
+void uiLoraChatKey(char, uint32_t) {}
+#endif
 
 LoraChatHit uiLoraChatHit(TFT_eSPI& t, int x, int y) {
     const int tabY = Theme::LIST_TOP;

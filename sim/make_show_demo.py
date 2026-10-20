@@ -32,6 +32,48 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.39.0 "Radar Love", at the T-Deck Plus's 320x240: the LORA page on the
+    # emulator's made-up band (sim/lora_sim.cpp: Bluff Creek, cryptids only).
+    # A packet lands 0.7 s into every capture, on the open tab's network, so
+    # each scene opens with a loud ping on the radar and a new chat line. The
+    # Meshtastic tab, the radar, a quiet band (SQUACHSIM_LORAQUIET: nothing
+    # for 30 s, so the SPECTRUM twinkles and the meteor has the strip to
+    # itself), the MeshCore tab (--tab 1), and a line typed and sent
+    # (SQUACHSIM_LORATYPE). SQUACHSIM_LORATX turns LORA TX on, so the compose
+    # line reads as it does on a board that can send.
+    "radar-love": [
+        ("lora", 30, 40, [], {"SQUACHSIM_LORATX": "1"}, 1500, "THE T-DECK GOT A RADIO PAGE. PRESS ENTER."),
+        ("lora", 75, 40, [], {"SQUACHSIM_LORATX": "1"}, 1600, "A RADAR THAT ONLY TELLS THE TRUTH"),
+        ("lora", 120, 50, [], {"SQUACHSIM_LORAQUIET": "30", "SQUACHSIM_LORATX": "1"}, 1500, "QUIET AIR? IT STILL PUTS ON A SHOW."),
+        ("lora", 40, 40, ["--tab", "1"], {"SQUACHSIM_LORATX": "1"}, 1500, "TAP A TAB: MESHTASTIC OR MESHCORE"),
+        ("lora", 20, 60, ["--tab", "1"], {"SQUACHSIM_LORATYPE": "WHO TOOK MY TRAIL MIX?"}, 1800, "TYPE. ENTER. THE WHOLE FOREST KNOWS."),
+    ],
+    # v1.38.0 "Snoop Onto Them", 320x240: an Axon body-cam alert and a gunshot
+    # sensor's (--alert picks the kind), M3@ty's bad dance (SQUACHSIM_MEATY=4)
+    # and a wave while he talks (=5), the FONTS page with BUBBLES slid to
+    # HUGE and its preview (SQUACHSIM_FONTS digits are MENUS TEXT BUTTONS
+    # BUBBLES XP PETS, 0-4 around 2; FONTPREVIEW 3 = bubbles), and the main
+    # screen saying a line in that bubble, under the tiles.
+    "snoop-onto-them": [
+        ("alert", 40, 30, ["--alert", "2"], {}, 1800, "AXON BODY CAMS, NOW HEARD OVER BLUETOOTH."),
+        ("alert", 40, 30, ["--alert", "5"], {}, 1800, "GUNSHOT SENSORS: RAVEN, AND NOW SHOTSPOTTER."),
+        ("clear", 40, 110, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "4", "SQUACHSIM_BATT": "80"}, 1500, "M3@TY GREW ARMS. NOBODY ASKED HIM TO."),
+        ("clear", 40, 60, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "5", "SQUACHSIM_BATT": "80"}, 1500, "ONLY WHEN HE NEEDS THEM."),
+        ("settings", 10, 14, ["--scroll", "0"], {"SQUACHSIM_PAGE": "5", "SQUACHSIM_FONTS": "222322", "SQUACHSIM_FONTPREVIEW": "3"}, 1900, "APPEARANCE > FONTS. SLIDE UNTIL YOU CAN READ IT."),
+        ("clear", 40, 50, ["--bg", "5"], {"SQUACHSIM_FONTS": "222322", "SQUACHSIM_SAY": "Is this big enough for you?", "SQUACHSIM_BATT": "80"}, 1800, "BIGGER BUBBLES. AND UNDER THE TILES NOW."),
+    ],
+    # v1.37.0 "Video Killed the Radio Star", 320x240: the igloo crossing SNOWFALL with two
+    # eyes in its door, then M3@ty out beside Squachy (--pet 6) talking, eating
+    # a catch (SQUACHSIM_CLIPCATCH drops one in), the hot dog (SQUACHSIM_MEATY=1),
+    # a throw hard enough to split him in three, and the igloo hide (=0).
+    "video-killed-the-radio-star": [
+        ("clear", 105, 70, ["--noseed", "--bg", "7"], {"SQUACHSIM_BATT": "80"}, 1500, "SOMEBODY LIVES IN THAT IGLOO. KNOCK THREE TIMES."),
+        ("clear", 40, 90, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_BATT": "80"}, 1500, "MEET M3@TY. HE'S HELPING. YOU JUST CAN'T TELL YET."),
+        ("clear", 40, 80, ["--noseed", "--bg", "0", "--pet", "6"], {"SQUACHSIM_CLIPCATCH": "0"}, 1500, "HE EATS EVERY CATCH. PLEASE STOP EATING THE EVIDENCE."),
+        ("clear", 40, 90, ["--noseed", "--bg", "5", "--pet", "6"], {"SQUACHSIM_MEATY": "1"}, 1300, "YOU WANNA SEE A HOT DOG? HE CAN DO A HOT DOG."),
+        ("clear", 40, 100, ["--noseed", "--bg", "5", "--pet", "6"], {"SQUACHSIM_THROW": "c:-1:0:-150:-120"}, 1800, "THROW HIM. OKAY, NOW THERE'S THREE OF HIM."),
+        ("clear", 40, 80, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "0"}, 1500, "SCARE HIM AND HE'S AN IGLOO. NOBODY'S HOME."),
+    ],
     # v1.36.0 "Highway to the Danger Zone", at the Marauder V8's 320x240: the
     # GPS fix on the main screen over SYNTHWAVE (--gps feeds the sample's
     # fix, at a Sydney Harbour landmark; the battery lamp at its new double

@@ -74,6 +74,7 @@ enum class SettingsRow : uint8_t {
     WATCH_QUIET_TAGS, // the T-Watch only: TAGS + RINGS, logged without waking the watch
     WATCH_LORA,      // the T-Watch only: LORA, which networks the LoRa radio listens to
     WATCH_LORA_CHATS, // the T-Watch only: LORA CHATS, what it decoded, one chat per network
+    LORA_TX,         // the T-Deck only: LORA TX, off or the power the chats' compose line sends at
 #if defined(CROWPANEL7)
     BUZZER,          // the CrowPanel 7 only, the one board with a buzzer: OFF, or NEW ONLY
 #endif
@@ -90,6 +91,15 @@ enum class SettingsRow : uint8_t {
     PRIVACY,         // PRIVACY MODE: addresses and names masked on screen, on the SYSTEM page
     EXT_SCREEN,      // the Cardputer ADV only: a second panel on the EXT header
     DET_STYLE,       // on the APPEARANCE page: XP or CLASSIC detection counters
+    CLOCK_FORMAT,    // on the DESK MODE page: 12-hour or 24-hour time
+    FONTS,           // on the APPEARANCE page: opens the FONTS page
+    FONT_MENUS,      // on the FONTS page: list and settings rows
+    FONT_TEXT,       // on the FONTS page: running text, headings, info panels
+    FONT_BUTTONS,    // on the FONTS page: button labels
+    FONT_BUBBLES,    // on the FONTS page: his bubble and the pets' balloons
+    FONT_XP,         // on the FONTS page: the XP counter tiles, 1x or 2x
+    FONT_PETS,       // on the FONTS page: the pets' balloons
+    FONT_PREVIEW,    // on the FONTS page: a sample of the last kind moved, at its size
     BACK,
     COUNT,
     NONE = 255
@@ -106,7 +116,9 @@ void uiSettingsScroll(int delta);     // positive = scroll down
 // Each page keeps its OWN scroll position, so leaving a page and coming back
 // puts you where you were instead of at the top -- the list is long enough
 // that losing your place was the most-felt annoyance on this screen.
-enum class SettingsPage : uint8_t { MAIN = 0, APPEARANCE = 1, SYSTEM = 2, DESK = 3, WATCH = 4 };
+enum class SettingsPage : uint8_t { MAIN = 0, APPEARANCE = 1, SYSTEM = 2, DESK = 3, WATCH = 4, FONTS = 5 };
+// Where UP goes from a page: FONTS sits inside APPEARANCE, the rest inside MAIN.
+SettingsPage uiSettingsParentPage();
 void         uiSettingsOpenPage(SettingsPage p);
 SettingsPage uiSettingsCurrentPage();
 
@@ -138,6 +150,13 @@ SettingsRow uiSettingsHitTest(TFT_eSPI& t, int x, int y, int screenW, int screen
 // resting on the label never nudges the value.
 int uiSettingsStepHit(TFT_eSPI& t, int x, int y, int screenW, int screenH);
 bool uiSettingsIsStepper(SettingsRow r);
+// The FONTS page's sliders: a tap on a FONT_ row's - or + steps it, a tap on
+// its track jumps to the nearest stop. Call for a tap uiSettingsHitTest put
+// on one of those rows.
+void uiSettingsFontTap(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+// Which kind the preview box shows (Settings::FontKind as a number); a slider
+// tap sets it. For the emulator's shots of each.
+void uiSettingsSetFontPreview(uint8_t kind);
 
 // ---- confirmation panel ---------------------------------------------------
 // Two rows here cannot be taken back by tapping them again: CALIBRATE TOUCH

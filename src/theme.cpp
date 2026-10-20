@@ -374,7 +374,7 @@ int listHeadingY(TFT_eSPI& t) {
 }
 
 void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color) {
-    t.setTextSize(large() ? 2 : 1);
+    t.setTextSize(large() && fontDelta(Settings::FontKind::TEXT) >= 0 ? 2 : 1);
     t.setTextColor(color, BG);
     t.setCursor(8, listHeadingY(t));
     t.print(text);
@@ -382,13 +382,13 @@ void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color) {
 }
 
 void bodyFontOn(TFT_eSPI& t) {
-    t.setTextFont(large() ? 2 : 1);
+    t.setTextFont(large() && fontDelta(Settings::FontKind::TEXT) >= 0 ? 2 : 1);
     t.setTextSize(1);
 }
 void bodyFontOff(TFT_eSPI& t) { t.setTextFont(1); }
 int bodyY(int px)              { return large() ? px * 19 / 12 : px; }
 int dialogBtnH(int base)       { return large() ? base + 8 : base; }
-uint8_t upSize(uint8_t base)   { return large() ? base + 1 : base; }
+uint8_t upSize(uint8_t base)   { return large() && fontDelta(Settings::FontKind::TEXT) >= 0 ? base + 1 : base; }
 
 void drawListRowPanel(TFT_eSPI& t, int w, int y, int hgt) {
     // Four rows of backdrop between tiles, not two, so they read as tiles
@@ -467,7 +467,240 @@ uint8_t uiTextSize(TFT_eSPI& t, uint8_t base) {
 
 uint8_t uiMenuTextSize(TFT_eSPI& t) {
     if (t.height() < 200) s_compact = true;
-    return t.width() >= 400 ? 3 : 2;
+    const int s = (t.width() >= 400 ? 3 : 2) + fontDelta(Settings::FontKind::MENUS);
+    return (uint8_t)(s < 1 ? 1 : s > 4 ? 4 : s);
+}
+
+// ---- FONTS ------------------------------------------------------------------
+#ifdef LOAD_FONT4
+static const int PET_FACES_N = 4;   // the pets' ladder, below
+#else
+static const int PET_FACES_N = 3;
+#endif
+// See theme.h. A stored step is -2..+2 around the size each board was built
+// with; every consumer clamps it to the sizes it actually has. A stored face
+// is 0 (as built), 1 PIXEL (the 6x8 system font) or 2 SMOOTH (font 2).
+int8_t fontDelta(Settings::FontKind k) {
+    int s = (int)Settings::fontStep(k) - 2;
+    return (int8_t)(s < -2 ? -2 : s > 2 ? 2 : s);
+}
+void fontRange(TFT_eSPI& t, Settings::FontKind k, int8_t& lo, int8_t& hi) {
+    using Settings::FontKind;
+    switch (k) {
+        case FontKind::MENUS: {
+            // The system font at sizes 1 to 4, around the 2 or 3 rows are.
+            const int base = t.width() >= 400 ? 3 : 2;
+            lo = (int8_t)(1 - base);
+            hi = (int8_t)(s_compact ? 0 : 4 - base);
+            break;
+        }
+        // Down to the 2.8in's sizes on the large panels, and never up: the
+        // screens place their lines for the size they were built with.
+        case FontKind::TEXT:     lo = s_large ? -1 : 0; hi = 0; break;
+        // Labels are measured against their boxes, so up is always safe to
+        // ask for; down only where they were stepped up to begin with.
+        case FontKind::BUTTONS:  lo = s_large ? -1 : 0; hi = 2; break;
+        // His bubble: four rungs (see speechApply()).
+        case FontKind::BUBBLES:  lo = (int8_t)(s_large ? -2 : -1); hi = (int8_t)(s_compact ? 0 : s_large ? 1 : 2); break;
+        // The XP tiles come in two sizes, 1x and 2x; a compact screen draws
+        // its own mini tiles and has neither.
+        case FontKind::XP_TILES: lo = (int8_t)(s_large && !s_compact ? -1 : 0); hi = (int8_t)(s_large || s_compact ? 0 : 1); break;
+        // The pets' balloons: the 6x8 font, font 2, (font 4,) font 2 doubled.
+        case FontKind::PETS:     lo = (int8_t)(s_large ? -1 : 0); hi = (int8_t)(s_compact ? 0 : PET_FACES_N - 1 - (s_large ? 1 : 0)); break;
+        default:                 lo = hi = 0; break;
+    }
+}
+const char* fontStepName(int8_t step) {
+    static const char* const N[5] = { "TINY", "SMALLER", "NORMAL", "BIGGER", "HUGE" };
+    return N[(step < -2 ? -2 : step > 2 ? 2 : step) + 2];
+}
+void setFontDelta(TFT_eSPI& t, Settings::FontKind k, int step) {
+    int8_t lo, hi;
+    fontRange(t, k, lo, hi);
+    if (step < lo) step = lo;
+    if (step > hi) step = hi;
+    Settings::setFontStep(k, (uint8_t)(step + 2));
+}
+bool fontHasFace(Settings::FontKind k) {
+    return k == Settings::FontKind::MENUS || k == Settings::FontKind::BUTTONS ||
+           k == Settings::FontKind::BUBBLES || k == Settings::FontKind::PETS;
+}
+bool fontSmooth(Settings::FontKind k) {
+    const uint8_t f = fontHasFace(k) ? Settings::fontFace(k) : 0;
+    if (f == 1) return false;
+    if (f == 2) return true;
+    // As built: menus in the system font, buttons in font 2 on the large
+    // panels; his bubble and the pets' balloons in font 2 from the rung that
+    // has it (the 6x8 font below that).
+    if (k == Settings::FontKind::BUBBLES) return (s_large ? 2 : 1) + fontDelta(k) >= 1;
+    if (k == Settings::FontKind::PETS)    return (s_large ? 1 : 0) + fontDelta(k) >= 1;
+    return k == Settings::FontKind::BUTTONS && s_large;
+}
+void toggleFontFace(Settings::FontKind k) {
+    if (fontHasFace(k)) Settings::setFontFace(k, fontSmooth(k) ? 1 : 2);
+}
+int xpTileScale() {
+    const int k = (s_large ? 2 : 1) + fontDelta(Settings::FontKind::XP_TILES);
+    return k < 1 ? 1 : k > 2 ? 2 : k;
+}
+
+// How tall a face is: the system font 8 rows a size, font 2 16, font 4 26.
+static int faceH(uint8_t font, uint8_t size) { return (font == 4 ? 26 : font == 2 ? 16 : 8) * size; }
+
+// The face menuFontOn() last set, for menuFontSmaller() to step down from.
+// Asked for as the system font at a size; a menu set to SMOOTH gets the
+// smooth face nearest below it -- font 2 (16 rows), font 4 (26) on the boards
+// that carry it, font 2 doubled (32) -- and one set to PIXEL gets the system
+// font where it would have had font 2.
+static uint8_t s_menuFont = 1, s_menuSize = 1;
+static void menuFace(TFT_eSPI& t, uint8_t font, uint8_t size) {
+    const uint8_t face = Settings::fontFace(Settings::FontKind::MENUS);
+    if (face == 2 && font == 1) {
+#ifdef LOAD_FONT4
+        if (size == 3) { font = 4; size = 1; }
+        else
+#endif
+        { font = 2; size = size >= 4 ? 2 : 1; }
+    }
+    else if (face == 1 && font == 2) { font = 1; size = (uint8_t)(size * 2); }
+    s_menuFont = font; s_menuSize = size;
+    t.setTextFont(font);
+    t.setTextSize(size);
+}
+void menuFontSized(TFT_eSPI& t, int size) { menuFace(t, 1, (uint8_t)(size < 1 ? 1 : size > 4 ? 4 : size)); }
+void menuFontOn(TFT_eSPI& t, bool narrow) {
+    if (!narrow) {
+        menuFontSized(t, uiMenuTextSize(t));
+        return;
+    }
+    // A narrow row's face was the body font -- font 2 on the large panels,
+    // the system font elsewhere -- and that, not TEXT, is what MENUS moves:
+    // down to the system font, up through its sizes 2 and 3.
+    const int8_t s = fontDelta(Settings::FontKind::MENUS);
+    if (s < 0)        menuFace(t, 1, 1);
+    else if (s > 0)   menuFace(t, 1, (uint8_t)(1 + s));
+    else              menuFace(t, s_large ? 2 : 1, 1);
+}
+void subListTextSize(TFT_eSPI& t, bool compact, const char* label, const char* value, int w) {
+    const int base = compact ? 1 : 2;
+    int ts = base + fontDelta(Settings::FontKind::MENUS);
+    if (ts < 1) ts = 1;
+    if (ts > 4) ts = 4;
+    menuFontSized(t, ts);
+    while (ts > base && t.textWidth(label) + (value ? t.textWidth(value) + 8 : 0) > w - 26) menuFontSized(t, --ts);
+}
+bool menuFontSmaller(TFT_eSPI& t) {
+    if (s_menuFont == 4) { s_menuFont = 2; t.setTextFont(2); return true; }
+    if (s_menuSize > 1)  { s_menuSize--; t.setTextSize(s_menuSize); return true; }
+    if (s_menuFont == 2) { s_menuFont = 1; t.setTextFont(1); return true; }
+    return false;
+}
+
+// His bubble, a rung at a time. In font 2 (SMOOTH, as built): the 6x8 font,
+// font 2, font 2 doubled, font 2 tripled -- the 2.8in boards speak on the
+// second rung and the large panels on the third. In PIXEL: the system font
+// at 1, 2, 3, 4. BUBBLES moves the rung. speechFontOn() picks it and the
+// rest answer for the rung it picked, so a caller that steps down with
+// speechFontSmaller() gets measurements that match.
+static int  s_speechLvl = 1, s_speechBase = 1;
+static bool s_speechPixel = false;
+static void speechApply(TFT_eSPI& t) {
+    if (s_speechPixel)    { t.setTextFont(1); t.setTextSize((uint8_t)(s_speechLvl + 1)); return; }
+    if (s_speechLvl == 0) { t.setTextFont(1); t.setTextSize(1); return; }
+    bubbleFontOn(t);
+    t.setTextSize(s_speechLvl);
+}
+void speechFontOn(TFT_eSPI& t, bool small) {
+    s_speechBase  = small ? 1 : (s_large ? 2 : 1);
+    s_speechPixel = !small && Settings::fontFace(Settings::FontKind::BUBBLES) == 1;
+    int lvl = small ? 1 : s_speechBase + fontDelta(Settings::FontKind::BUBBLES);
+    s_speechLvl = lvl < 0 ? 0 : lvl > 3 ? 3 : lvl;
+    speechApply(t);
+}
+bool speechAboveNormal()        { return s_speechLvl > s_speechBase; }
+void speechFontSmaller(TFT_eSPI& t) { if (s_speechLvl > 0) { s_speechLvl--; speechApply(t); } }
+int speechScale()  { return s_speechPixel ? s_speechLvl + 1 : (s_speechLvl == 0 ? 1 : s_speechLvl); }
+int speechTextH()  { return (s_speechPixel || s_speechLvl == 0) ? 8 : bubbleTextH(); }
+int speechAscent() { return (s_speechPixel || s_speechLvl == 0) ? 0 : bubbleAscent(); }
+
+// A button label's faces, smallest first: the system font, font 2 (as tall
+// as size 2, about as narrow as size 1), then the system font at 2, 3, 4.
+// BUTTONS moves a label along this from the face it would have had, and the
+// label takes the biggest face at or below that which its box can hold. Set
+// to PIXEL or SMOOTH, it moves along that face's own sizes instead.
+struct LabelFace { uint8_t font, size; };
+static const LabelFace LABEL_FACES[]  = { {1, 1}, {2, 1}, {1, 2}, {1, 3}, {1, 4} };
+static const LabelFace PIXEL_FACES[]  = { {1, 1}, {1, 2}, {1, 3}, {1, 4} };
+#ifdef LOAD_FONT4
+static const LabelFace SMOOTH_FACES[] = { {2, 1}, {4, 1}, {2, 2}, {2, 3} };
+#else
+static const LabelFace SMOOTH_FACES[] = { {2, 1}, {2, 2}, {2, 3} };
+#endif
+static const int SMOOTH_N = sizeof(SMOOTH_FACES) / sizeof(SMOOTH_FACES[0]);
+// The pets' balloons, smallest first. As built: the 6x8 font on the small
+// panels, font 2 (bold) on the large ones; PETS moves along this, and a
+// PIXEL or SMOOTH pick along that face's own sizes.
+#ifdef LOAD_FONT4
+static const LabelFace PET_FACES[] = { {1, 1}, {2, 1}, {4, 1}, {2, 2} };
+#else
+static const LabelFace PET_FACES[] = { {1, 1}, {2, 1}, {2, 2} };
+#endif
+static const LabelFace PET_PIXEL[] = { {1, 1}, {1, 2}, {1, 3} };
+static uint8_t s_petFont = 1, s_petSize = 1;
+static void petFace(TFT_eSPI& t, uint8_t font, uint8_t size) {
+    s_petFont = font; s_petSize = size;
+    t.setTextFont(font);
+    t.setTextSize(size);
+}
+void petFontOn(TFT_eSPI& t) {
+    const uint8_t face = Settings::fontFace(Settings::FontKind::PETS);
+    const LabelFace* L = face == 1 ? PET_PIXEL : face == 2 ? PET_FACES + 1 : PET_FACES;
+    const int n = face == 1 ? 3 : face == 2 ? PET_FACES_N - 1 : PET_FACES_N;
+    // The rung the board was built with, on this ladder.
+    const int native = face == 2 ? 0 : (s_large ? 1 : 0);
+    int lvl = native + fontDelta(Settings::FontKind::PETS);
+    if (lvl < 0) lvl = 0;
+    if (lvl >= n) lvl = n - 1;
+    petFace(t, L[lvl].font, L[lvl].size);
+}
+bool petFontSmaller(TFT_eSPI& t) {
+    if (s_petFont == 4) { petFace(t, 2, 1); return true; }
+    if (s_petSize > 1)  { petFace(t, s_petFont, s_petSize - 1); return true; }
+    if (s_petFont == 2) { petFace(t, 1, 1); return true; }
+    return false;
+}
+
+// Moves from (font, size) by the BUTTONS step to the biggest face that fits
+// maxW x maxH, and leaves it set. Nothing smaller than the ladder's first.
+static void labelFaceStep(TFT_eSPI& t, const char* label, uint8_t& font, uint8_t& size, int maxW, int maxH) {
+    const int8_t step = fontDelta(Settings::FontKind::BUTTONS);
+    const uint8_t face = Settings::fontFace(Settings::FontKind::BUTTONS);
+    if (step == 0 && face == 0) return;
+    const LabelFace* L = face == 1 ? PIXEL_FACES : face == 2 ? SMOOTH_FACES : LABEL_FACES;
+    const int n = face == 1 ? 4 : face == 2 ? SMOOTH_N : 5;
+    // Where the face it would have had sits on this ladder: the tallest
+    // rung no taller than it (the first, if all are).
+    const int h0 = faceH(font, size);
+    int at = 0;
+    for (int i = 0; i < n; i++) {
+        const int hi = faceH(L[i].font, L[i].size);
+        if (hi < h0 || (hi == h0 && (face != 0 || (L[i].font == font && L[i].size == size)))) at = i;
+    }
+    int target = at + step;
+    if (target < 0) target = 0;
+    if (target >= n) target = n - 1;
+    // The biggest that fits; when not even the ladder's first does (a box
+    // sized for the 6x8 font, set to SMOOTH), the face it would have had.
+    for (int i = target; i >= 0; i--) {
+        t.setTextFont(L[i].font);
+        t.setTextSize(L[i].size);
+        if (t.textWidth(label) <= maxW && t.fontHeight() <= maxH) {
+            font = L[i].font; size = L[i].size;
+            break;
+        }
+    }
+    t.setTextFont(font);
+    t.setTextSize(size);
 }
 
 void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
@@ -488,21 +721,26 @@ void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
         t.setTextSize(ts);
         if (t.textWidth(label) > w - 6 || t.fontHeight() > h - 2) ts = textSize;
     }
-    // A large panel's label that cannot take size 2 gets the body font
-    // rather than the 8-row system font: about as wide, half again as tall.
+    // A large panel's label that cannot take size 2 gets font 2 rather than
+    // the 8-row system font: about as wide, half again as tall.
     bool body = false;
     if (ts == 1 && textSize == 1 && large() && h >= 20) {
-        bodyFontOn(t);
+        t.setTextFont(2);
+        t.setTextSize(1);
         body = t.textWidth(label) <= w - 6;
-        if (!body) bodyFontOff(t);
+        if (!body) t.setTextFont(1);
     }
+    // FONTS > BUTTONS moves that along the label faces, measured against
+    // the box like the step-up above.
+    uint8_t font = body ? 2 : 1;
     t.setTextSize(ts);
+    labelFaceStep(t, label, font, ts, w - 6, h - 2);
     t.setTextColor(fg, fill);
     int tw = t.textWidth(label);
     int th = t.fontHeight();
     t.setCursor(x + (w - tw) / 2, y + (h - th) / 2);
     t.print(label);
-    if (body) bodyFontOff(t);
+    if (font != 1) t.setTextFont(1);
 }
 
 void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
@@ -545,10 +783,14 @@ void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
     t.setTextWrap(false);
     t.setTextColor(BLACK, W95_FACE);
     const bool swapped = large() && h >= 20;
+    uint8_t font = 1, size = 1;
     if (swapped) {
         t.setTextFont(2);
         if (t.textWidth(label) > w - 8) t.setTextFont(1);
+        else font = 2;
     }
+    // FONTS > BUTTONS moves the face, measured against the button's face.
+    labelFaceStep(t, label, font, size, w - 8, h - 4);
     const int tw = t.textWidth(label) + (bold ? 1 : 0);
     const int th = t.fontHeight();
     const int ox = sunken ? 1 : 0;
@@ -560,7 +802,7 @@ void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
     t.setCursor(lx, ly);
     t.print(label);
     if (bold) { t.setCursor(lx + 1, ly); t.print(label); }
-    if (swapped) t.setTextFont(callerFont);   // only ever touched here
+    if (swapped || font != 1 || size != 1) { t.setTextSize(1); t.setTextFont(callerFont); }   // only ever touched here
 }
 
 int drawWin95Window(TFT_eSPI& t, int x, int y, int w, int h, const char* title) {
@@ -10115,7 +10357,8 @@ void drawInfoPanel(TFT_eSPI& t, int w, int h, uint32_t now,
 
     // The large panels set it at size 2, a page of as many lines as fit
     // above the button; everywhere else the size-1 seven it always had.
-    t.setTextSize(s_large ? 2 : 1);
+    // TEXT smaller sets it at size 1 there too, still paged.
+    t.setTextSize(s_large && fontDelta(Settings::FontKind::TEXT) >= 0 ? 2 : 1);
     t.setTextWrap(false);
     t.setTextColor(WHITE, BG);
     const int step = s_large ? t.fontHeight() + 3 : 12;

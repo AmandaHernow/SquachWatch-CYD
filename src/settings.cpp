@@ -47,7 +47,7 @@ static bool        s_detXp = true;
 // the hardware cannot hear: the ninth board in the room evicts the first, and
 // the screen would still show eight.
 static const uint8_t CROWD_MAX = 8;
-static uint8_t     s_meshCrowd = 1;   // how many on screen at once, 1..CROWD_MAX
+static uint8_t     s_meshCrowd = 1;   // how many on screen at once, 1..CROWD_MAX; 0 = NONE
 static bool        s_deskSquad     = false;   // the squad on the desk clock as well
 static uint8_t     s_deskCrowd     = 1;       // the desk's own HOW MANY
 static bool        s_deskFullVisit = false;   // one visitor: the whole visit, not a chat
@@ -70,6 +70,14 @@ static bool        s_deskActive = false;
 static uint8_t     s_clockFont     = 0;   // 0 segments, 1 Bangers
 static uint8_t     s_clockSize     = 1;   // 0 small, 1 medium, 2 large
 static uint8_t     s_clockBackdrop = 0;   // 0 plain, 1 rain, 2 snow, 3 toasters, 4 fire, 5 stars, 6 fireflies
+static bool        s_clock24Hour   = false;
+// FONTS: per kind of text, 0..4 for -2..+2 around the built size (2 is as
+// built). Keys fntMenu, fntText, fntBtn, fntBub, fntXp, fntPet. And a face
+// per kind, 0 as built, 1 PIXEL, 2 SMOOTH: keys fcMenu .. fcPet.
+static uint8_t     s_fontStep[(int)FontKind::COUNT] = { 2, 2, 2, 2, 2, 2 };
+static uint8_t     s_fontFace[(int)FontKind::COUNT] = { 0, 0, 0, 0, 0, 0 };
+static const char* const FONT_KEYS[(int)FontKind::COUNT] = { "fntMenu", "fntText", "fntBtn", "fntBub", "fntXp", "fntPet" };
+static const char* const FACE_KEYS[(int)FontKind::COUNT] = { "fcMenu", "fcText", "fcBtn", "fcBub", "fcXp", "fcPet" };
 static const uint8_t CLOCK_BG_N  = 7;
 // Bit N = DetectionType N enabled. UNKNOWN (0) is never included -- see
 // Types that arrive switched OFF, on a fresh install and on upgrade alike.
@@ -180,6 +188,7 @@ static uint8_t  s_loraMode     = 2;
 static uint8_t  s_loraFocus    = 0;
 static uint8_t  s_loraRegion   = 0;   // AUTO
 static uint8_t  s_loraListen   = 3;   // BOTH
+static uint8_t  s_loraTx       = 0;   // LORA TX: 0 off, else dBm
 // The online lookups, all four OFF. See Settings::loraLookups() for why the
 // default is the opposite of the update check's.
 static bool     s_loraLookups  = false;
@@ -387,6 +396,12 @@ const char* loraListenName() {
     static const char* const N[4] = { "OFF", "MESHTASTIC", "MESHCORE", "BOTH" };
     return N[s_loraListen & 3];
 }
+uint8_t loraTxDbm() { return s_loraTx; }
+void cycleLoraTx() {
+    s_loraTx = s_loraTx == 0 ? 10 : s_loraTx == 10 ? 20 : 0;
+    s_prefs.putUChar("loraTx", s_loraTx);
+}
+const char* loraTxName() { return s_loraTx == 0 ? "OFF" : s_loraTx == 10 ? "10 dBm" : "20 dBm"; }
 uint8_t loraRegion() { return s_loraRegion; }
 void setLoraRegion(uint8_t r) { s_loraRegion = r > 2 ? 0 : r; s_prefs.putUChar("loraRgn", s_loraRegion); }
 uint8_t loraFocus() { return s_loraFocus; }
@@ -472,7 +487,7 @@ void load() {
     // Both off unless asked for. See the note in settings.h.
     s_meshDetect   = s_prefs.getBool("meshrx", false);
     s_meshCrowd    = s_prefs.getUChar("crowd", 1);
-    if (s_meshCrowd < 1 || s_meshCrowd > CROWD_MAX) s_meshCrowd = 1;
+    if (s_meshCrowd > CROWD_MAX) s_meshCrowd = 1;
     // Two draws exactly what one does -- see cycleMeshCrowd(). An older build
     // could not have stored it, but a hand-edited NVS can, and a setting that
     // does nothing is worse than one that moved.
@@ -481,7 +496,8 @@ void load() {
     // Follows the main screen's until the desk has one of its own: the two
     // were one setting, and a board upgraded mid-use should look the same.
     s_deskCrowd     = s_prefs.getUChar("dskcrwd", s_meshCrowd);
-    if (s_deskCrowd < 1 || s_deskCrowd > CROWD_MAX || s_deskCrowd == 2) s_deskCrowd = s_meshCrowd;
+    // NONE is the main screen's alone (the desk has SQUAD ON DESK for that).
+    if (s_deskCrowd < 1 || s_deskCrowd > CROWD_MAX || s_deskCrowd == 2) s_deskCrowd = s_meshCrowd ? s_meshCrowd : 1;
     s_deskFullVisit = s_prefs.getBool("dskvisit", false);
     s_meshTransmit = s_prefs.getBool("meshtx", false);
     s_meshConsent  = s_prefs.getBool("meshok", false);
@@ -506,7 +522,14 @@ void load() {
     s_deskBg = s_prefs.getUChar("deskBg", 255);
     s_clockFont     = s_prefs.getUChar("clkfont", 0);
     s_clockSize     = s_prefs.getUChar("clksize", 1);
+    for (int i = 0; i < (int)FontKind::COUNT; i++) {
+        s_fontStep[i] = s_prefs.getUChar(FONT_KEYS[i], 2);
+        if (s_fontStep[i] > 4) s_fontStep[i] = 2;
+        s_fontFace[i] = s_prefs.getUChar(FACE_KEYS[i], 0);
+        if (s_fontFace[i] > 2) s_fontFace[i] = 0;
+    }
     s_clockBackdrop = s_prefs.getUChar("clkbg", 0);
+    s_clock24Hour   = s_prefs.getBool("clk24", false);
     if (s_clockFont > 1)     s_clockFont = 0;
     if (s_clockSize > 2)     s_clockSize = 1;
     if (s_clockBackdrop >= CLOCK_BG_N) s_clockBackdrop = 0;
@@ -578,6 +601,8 @@ void load() {
     s_loraRegion   = s_prefs.getUChar("loraRgn", 0);
     s_loraListen   = s_prefs.getUChar("loraLstn", 3);
     if (s_loraListen > 3) s_loraListen = 3;
+    s_loraTx = s_prefs.getUChar("loraTx", 0);
+    if (s_loraTx != 10 && s_loraTx != 20) s_loraTx = 0;
     if (s_loraRegion > 2) s_loraRegion = 0;
     // False, every time, unless somebody has said otherwise on this board.
     s_loraLookups  = s_prefs.getBool("loraLkup", false);
@@ -687,6 +712,8 @@ const char* clockBackdropName() {
 }
 void        cycleClockBackdrop() { s_clockBackdrop = (uint8_t)((s_clockBackdrop + 1) % CLOCK_BG_N); s_prefs.putUChar("clkbg", s_clockBackdrop); }
 void        cyclePrevClockBackdrop() { s_clockBackdrop = (uint8_t)((s_clockBackdrop + CLOCK_BG_N - 1) % CLOCK_BG_N); s_prefs.putUChar("clkbg", s_clockBackdrop); }
+bool        clock24Hour() { return s_clock24Hour; }
+void        toggleClock24Hour() { s_clock24Hour = !s_clock24Hour; s_prefs.putBool("clk24", s_clock24Hour); }
 
 Background deskBackground() {
     if (s_deskBg != 255 && backgroundSelectable((Background)s_deskBg)) return (Background)s_deskBg;
@@ -784,6 +811,19 @@ void markPocketNoteShown() {
 bool auraShown() { return s_aura; }
 
 bool detXp() { return s_detXp; }
+
+uint8_t fontStep(FontKind k) { return (uint8_t)k < (uint8_t)FontKind::COUNT ? s_fontStep[(int)k] : 1; }
+uint8_t fontFace(FontKind k) { return (uint8_t)k < (uint8_t)FontKind::COUNT ? s_fontFace[(int)k] : 0; }
+void setFontFace(FontKind k, uint8_t face) {
+    if ((uint8_t)k >= (uint8_t)FontKind::COUNT || face > 2 || s_fontFace[(int)k] == face) return;
+    s_fontFace[(int)k] = face;
+    s_prefs.putUChar(FACE_KEYS[(int)k], face);
+}
+void setFontStep(FontKind k, uint8_t step) {
+    if ((uint8_t)k >= (uint8_t)FontKind::COUNT || step > 4 || s_fontStep[(int)k] == step) return;
+    s_fontStep[(int)k] = step;
+    s_prefs.putUChar(FONT_KEYS[(int)k], step);
+}
 
 void toggleDetXp() {
     s_detXp = !s_detXp;
@@ -973,7 +1013,8 @@ uint8_t deskCrowd() { return s_deskCrowd; }
 static const char* crowdLabel(uint8_t n) {
     // ONE is a different thing, not a count of one: it is the ordinary visit,
     // with the set pieces and the emotes that a crowd stands down.
-    if (n <= 1) return "ONE";
+    if (n == 0) return "NONE";
+    if (n == 1) return "ONE";
     static char b[10];
     snprintf(b, sizeof b, "UP TO %u", (unsigned)n);
     return b;
@@ -997,8 +1038,11 @@ static uint8_t nextCrowd(uint8_t c) {
     if (n == 2) n = 3;
     return n;
 }
+// The main screen's goes NONE -> ONE -> 3 .. 8 -> NONE. NONE keeps everybody
+// off the screen -- no visit, no crowd -- while the squad badge, messages and
+// heads-ups carry on: one Squachy each when a desk full of boards is under test.
 void cycleMeshCrowd() {
-    s_meshCrowd = nextCrowd(s_meshCrowd);
+    s_meshCrowd = s_meshCrowd >= CROWD_MAX ? 0 : nextCrowd(s_meshCrowd);
     s_prefs.putUChar("crowd", s_meshCrowd);
 }
 void cycleDeskCrowd() {

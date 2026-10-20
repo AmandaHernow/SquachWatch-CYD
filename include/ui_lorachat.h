@@ -17,3 +17,6 @@ void        uiLoraChatSelect(uint8_t tab); // 0 Meshtastic, 1 MeshCore
 // Messages decoded since the chats were last open, both networks together,
 // for the LORA CHATS row.
 uint16_t    uiLoraChatUnread();
+// The T-Deck's keyboard while the chats are up: printable keys type, '\b'
+// deletes, '\n' sends what is typed on the open tab's network.
+void        uiLoraChatKey(char c, uint32_t now);

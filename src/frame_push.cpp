@@ -269,6 +269,9 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
 // push (pushRowsDma) to step aside mid-frame. Here, not beside that push,
 // because the QSPI board has no such push and still defines busWant().
 static volatile bool s_busWanted = false;
+// Whether the panel's device holds the IDF driver's bus (a frame in flight;
+// on the T-Deck, always, once the first frame has gone). Same reason as above.
+static volatile bool s_pushHolds = false;   // the panel's device holds the driver's bus (a frame in flight)
 static uint16_t* s_bounce[2] = { nullptr, nullptr };
 static int32_t   s_bounceW  = 0;
 static int8_t    s_dmaState = 0;             // 0 untried, 1 on, -1 not available
@@ -602,7 +605,14 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
         // The bus for the whole frame: the driver's per-transfer lock is a
         // scheduling point, and on one core that is where the radio tasks
         // get in between chunks.
-        if (dma) spi_device_acquire_bus(dmaHAL, portMAX_DELAY);
+        // On the T-Deck the hold is taken once and KEPT: its radio shares
+        // this host and works in the gaps between chunks and frames, and the
+        // driver's interrupt handler wakes "the device holding the bus" on
+        // its way out of every transaction -- with that changing hands every
+        // frame it dereferenced a stale one, LoadProhibited in
+        // spi_bus_lock_bg_exit every 15 s to 6 min (the black box,
+        // 2026-10-13). Nothing else on that board is a device of this driver.
+        if (dma && !s_pushHolds) { spi_device_acquire_bus(dmaHAL, portMAX_DELAY); s_pushHolds = true; }
 #endif
         for (int i = 0; i < n; i++) {
             const int32_t r0 = spans[i].r0, r1 = spans[i].r1;
@@ -626,11 +636,16 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
                     // it, then everything taken back and the window set for
                     // the rows still to go. Only when this task holds the lock
                     // (the pusher); a caller pushing synchronously carries on.
-                    spi_device_release_bus(dmaHAL);
+                    // The device's hold on the driver is KEPT across the
+                    // hand-over: the T-Deck's radio sends its bytes through
+                    // the host's registers under that hold, the way the
+                    // library's own window writes do. Giving the hold up and
+                    // taking it back here, and the radio taking one of its own,
+                    // hundreds of times a second, ended in the driver's
+                    // interrupt handler on an empty device entry (2026-10-13).
                     tft.endWrite();
                     busStepAside();
                     tft.startWrite();
-                    spi_device_acquire_bus(dmaHAL, portMAX_DELAY);   // the driver takes no other wait
                     tft.setAddrWindow(x, y + at, w, r1 - at);
                 }
                 continue;
@@ -661,7 +676,9 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
 #endif  // !SQW_PUSH_DMA_ONLY
         }
 #if SQW_PUSH_DMA && !SQW_PUSH_QSPI
-        if (dma) spi_device_release_bus(dmaHAL);
+#if !defined(TDECK_PLUS)
+        if (dma) { s_pushHolds = false; spi_device_release_bus(dmaHAL); }
+#endif
 #endif
 #if defined(NM_CYD_C5)
         sqwC5SpiClockRestore(c5pcr);
@@ -754,16 +771,25 @@ static void busStepAside() {
     if (!s_bus || xSemaphoreGetMutexHolder(s_bus) != xTaskGetCurrentTaskHandle()) return;
     xSemaphoreGiveRecursive(s_bus);
     taskYIELD();
+    // The give only makes the waiter READY. The T-Deck's radio task is a
+    // lower priority than this one, or on the other core, and either way
+    // the take below won the race nearly every time: the radio got the bus
+    // only between frames, 14-27 ms of waiting per turn (2026-10-13). So
+    // sleep a tick at a time until it has the lock (busLock() clears the
+    // flag once it does), a few ticks at most.
+    for (int i = 0; i < 4 && s_busWanted; i++) vTaskDelay(1);
     if (xSemaphoreTakeRecursive(s_bus, pdMS_TO_TICKS(500)) != pdTRUE) {
         Serial.printf("[push] step-aside: the lock did not come back in 500 ms (holder %p)\n", (void*)xSemaphoreGetMutexHolder(s_bus));
         xSemaphoreTakeRecursive(s_bus, portMAX_DELAY);
     }
 }
 void busWant()   { s_busWanted = true; }
+bool pushHoldsBus() { return s_pushHolds; }
 void busLock()   { if (s_bus) xSemaphoreTakeRecursive(s_bus, portMAX_DELAY); s_busWanted = false; }
 void busUnlock() { if (s_bus) xSemaphoreGiveRecursive(s_bus); }
 #else
 void busWant() {}
+bool pushHoldsBus() { return false; }
 bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }
 bool asyncSubmit(const uint8_t*, int32_t, int32_t, int32_t, int32_t) { return false; }
