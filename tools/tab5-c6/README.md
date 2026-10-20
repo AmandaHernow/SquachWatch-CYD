@@ -5,7 +5,8 @@ Bluetooth are an ESP32-C6 on the same board, reached over SDIO through
 Espressif's ESP-Hosted. This folder is everything about that C6: the firmware
 it runs, the tool that writes it, the probe that found how to talk to it, and
 the bench scripts. The P4 side (the app) is `[env:tab5]` in platformio.ini and
-`src/tab5_*.cpp`.
+`src/tab5_*.cpp`; the board as a whole, and what is proven on it, is
+[docs/TAB5.md](../../docs/TAB5.md).
 
 ## State on 2026-10-19
 
@@ -18,6 +19,7 @@ the bench scripts. The P4 side (the app) is `[env:tab5]` in platformio.ini and
   HCI over the same SDIO link) and the NimBLE host the Arduino core builds
   in, driven by esp-nimble-cpp 2.5.0 (same API as NimBLE-Arduino, which
   cannot be used: it brings its own host and expects a local controller).
+  Commit 3547b2b; SquachEmit's Bluetooth trackers were all caught.
 - Copies of both C6 images and the write tool are in `sim/out/tab5/c6/`
   (ignored by git): `squach-2.12.13.bin` (ours), `stock-2.12.13.bin`
   (Espressif's, for a rollback), and `bootloader.bin`, `partition-table.bin`,

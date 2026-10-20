@@ -7,7 +7,8 @@
 // M5GFX tells them apart at boot. Two PI4IOE5V6408 expanders (0x43, 0x44)
 // hold the panel's reset, the touch reset, the speaker enable and the
 // radio's power; M5GFX programs both on init. The ESP32-C6 radio hangs off
-// SDIO and is not driven by this firmware. USB-C is the P4's own
+// SDIO; src/tab5_radio.cpp drives its WiFi and Bluetooth (docs/TAB5.md).
+// USB-C is the P4's own
 // USB-serial-JTAG. Nothing here is guessed: the pins are M5GFX's and the
 // reference BSP's, the memory numbers were read off the board (2026-10-19).
 #pragma once

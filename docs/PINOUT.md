@@ -205,6 +205,21 @@ board 2026-10-12. The console is the native USB port.
 Not used: 43 (GPS RX), 46 (keyboard INT, polled instead), 48/21/47/14 (the
 ES7210 microphones), 19/20 (USB).
 
+## M5Stack Tab5 — `[env:tab5]`
+
+An ESP32-P4 (no radio of its own) with an ESP32-C6 for WiFi and Bluetooth on
+SDIO. Pins from M5GFX and M5Stack's reference board support; the board, the
+radio link and what is proven are in [TAB5.md](TAB5.md).
+
+| Part | Pins |
+|---|---|
+| MIPI-DSI panel, 720×1280 as wired | two DSI lanes, driven by M5GFX; backlight GPIO 22 |
+| Touch (inside the ST7123 panel chip) | I2C SDA 31, SCL 32, INT 23, address 0x55 |
+| I/O expander 0x43 | P4 panel reset, P5 touch reset, P1 speaker enable, P2 5 V out |
+| I/O expander 0x44 | P0 C6 power, P3 USB 5 V, P7 charge enable |
+| ESP32-C6 on SDIO | CLK 12, CMD 13, D0 11, D1 10, D2 9, D3 8 |
+| ESP32-C6 reset | GPIO 15, **active-high** on this unit |
+
 ## Sources
 
 - [witnessmenow/ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display) (MIT)

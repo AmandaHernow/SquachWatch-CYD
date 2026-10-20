@@ -100,6 +100,7 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | M5Stack StickS3 | BETA | 1.14" screen, landscape, two buttons |
 | M5Stack Cardputer ADV | BETA | Driven from its keyboard. Not the original Cardputer |
 | LilyGo T-Watch S3 / S3 Plus | BETA | On your wrist, with a battery and a buzz. Listens to **LoRa**; the S3 Plus adds **GPS**. See [On the watch](#on-the-watch) |
+| M5Stack Tab5 | No (experimental, build it yourself) | 5" 1280×720 tablet on an ESP32-P4, whose radio is a separate ESP32-C6. WiFi and Bluetooth detection both work, but the C6 needs our firmware written first. No SD, sound or battery yet. [docs/TAB5.md](docs/TAB5.md) |
 
 Each board has its own build in `platformio.ini`, one `[env:...]` each, with
 what is and is not confirmed on it.
@@ -588,6 +589,7 @@ SquachWatch-CYD/
 │   ├── DETECTIONS.md             (per-signature provenance)
 │   ├── CROWPANEL7.md             (the 7" CrowPanel: setup and testing)
 │   ├── NM-CYD-C5.md              (the ESP32-C5 board: esptool route, every pin)
+│   ├── TAB5.md                   (the M5Stack Tab5: P4 + C6, the radio link, status)
 │   ├── LORA.md                   (LoRa research and the decoders behind it)
 │   ├── IDEAS.md                  (things worth building, with their cost)
 │   └── SQUACHWARE-AESTHETIC.md   (CSS → RGB565 mapping)

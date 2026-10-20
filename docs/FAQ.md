@@ -53,6 +53,7 @@ Everything on the [web flasher](https://squachwatch.com/), with the names it use
 | M5Stack StickS3 | None, two buttons | BETA | Tiny 1.14" screen, landscape only. One button moves a cursor, the other presses. |
 | M5Stack Cardputer ADV | None, keyboard | BETA | Not the original Cardputer. Arrows and TAB move, ENTER presses, ESC goes home. |
 | LilyGo T-Watch S3 / S3 Plus | Capacitive | BETA | On your wrist. Battery, buzz, LoRa listening; the S3 Plus adds GPS. |
+| M5Stack Tab5 | Capacitive | No | Experimental. A 5" tablet whose radio is a separate chip that needs our firmware first. Notes in [TAB5.md](TAB5.md). |
 
 Not sure which one you've got? The code on the back (like ESP32-2432S028R) tells you. The last letter is the touch: R is resistive (press), C is capacitive (tap). Type it into the flasher's box and it picks the build for you.
 

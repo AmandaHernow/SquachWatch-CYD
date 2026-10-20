@@ -84,7 +84,10 @@ The rest are not on the flasher: `freenove-s3-40` is the Freenove
 ESP32-S3 4.0" (FNK0104S), run on one board so far; `*-crowd`, `*-flood`,
 `twatch-s3-loratx` and the `crowpanel7-*` extras are bench builds,
 `cyd35` is the frozen 3.5" build, and `rlphantom` (the Phantom's
-capacitive build) has never run on a real board.
+capacitive build) has never run on a real board. `tab5` is the M5Stack
+Tab5, experimental, and its C6 radio needs our firmware first; see
+[TAB5](TAB5.md). `tab5-paneltest` and `tab5-radiotest` are its bench
+builds.
 
 **Don't know which 2.8" screen you have?** Nobody can tell from the
 outside. Start with `cyd-fast`; a solid white screen means try `cyd`,
@@ -215,6 +218,7 @@ with the crash on it. Those are the things to put in a bug report.
 - **The C5 has its own toolchain.** `nm-cyd-c5` uses a different
   platform (pioarduino, Arduino 3.3) whose installer can break `pio`
   for every other board. Build it with its own `PLATFORMIO_CORE_DIR`.
+  The same goes for `marauder-v8` and `tab5`.
 - **One `pio run` at a time.** Two builds running at once can wipe
   each other's `.pio/build` folders.
 
