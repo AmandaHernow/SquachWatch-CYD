@@ -87,6 +87,15 @@ and four times the drawing for the same layouts.
 - **TFT_eSPI is kept as a type, not a driver.** Every UI function takes a
   `TFT_eSPI&`, so the class stays; `include/tab5_display.h` makes its bus calls
   inert and `extra_script.py` lets it compile for a chip it has never heard of.
+- **Backgrounds fill the whole 640×360.** Four of them were drawn into
+  buffers sized for the 3.5"'s 480 or the 2.8"'s 320, and left part of the
+  Tab5 bare: the glyph rain and the fire covered the left half, the terminal
+  left its right third and lower half empty, and the toasters were thin on the
+  ground. `src/theme.cpp` now sizes those buffers from `SQW_BG_MAX_W` (640
+  here) and draws twice the toasters, stars and flames (`SQW_BG_DENSITY`).
+  Every other board's backgrounds render pixel-for-pixel the same as before
+  (`sim/bg_before_after.sh`). On the board: terminal 31–44 fps, toasters 24,
+  glyph rain 15, fire 11.
 - **Why animated backgrounds are slower:** the cost is the CPU writing into
   PSRAM while the DSI engine is reading the same memory, about 30 ms for a
   full 1.8 MB frame. The P4's 2D hardware (the PPA, which scales and rotates)
