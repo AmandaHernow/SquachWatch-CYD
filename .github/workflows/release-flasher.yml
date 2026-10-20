@@ -100,7 +100,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.13"   # pioarduino refuses newer (3.15 broke the C5 runner, 2026-10-20)
       - name: Install PlatformIO
         run: pip install --upgrade platformio
       - name: Build RockBase NM-CYD-C5 (ESP32-C5)
@@ -223,7 +223,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.13"   # pioarduino refuses newer (3.15 broke the C5 runner, 2026-10-20)
 
       - name: Install PlatformIO
         run: pip install --upgrade platformio
