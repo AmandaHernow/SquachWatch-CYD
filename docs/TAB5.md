@@ -17,10 +17,12 @@ C6.
 | Flash / PSRAM | 4 MB / none | **16 MB / 32 MB** |
 | USB | CH340 | the P4's own USB-serial-JTAG (USB-C) |
 
-**Status: bench build, not on the web flasher.** It runs the whole UI with
+**Status: experimental, on the web flasher's test builds only** (squachwatch.com/?lab=1). It runs the whole UI with
 WiFi and Bluetooth detection on one unit. The C6 needs its own firmware written
 first (see [The C6 needs our firmware](#the-c6-needs-our-firmware)), which is
-the main reason it is not offered to anyone yet.
+the main reason it is not on the public list yet. Flashing the Tab5 from the
+browser never touches the C6: on a Tab5 whose C6 still has M5Stack's firmware,
+the app runs with WiFi and Bluetooth off.
 
 ## What works and what does not
 
@@ -35,7 +37,7 @@ the main reason it is not offered to anyone yet.
 | SD card | Not driven yet |
 | Speaker, battery, power button | Not driven yet |
 | Updates over WiFi or Bluetooth | Not yet. The radio sniffs; it does not connect |
-| Web flasher | Not listed |
+| Web flasher | Test builds only (`?lab=1`), from the first lab run after 2026-10-19 |
 
 ## Build and flash
 

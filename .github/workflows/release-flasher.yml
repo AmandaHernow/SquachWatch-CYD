@@ -110,6 +110,14 @@ jobs:
       - name: Build Marauder V8 (ESP32-C5)
         continue-on-error: true
         run: pio run -e marauder-v8
+      # The M5Stack Tab5 (ESP32-P4) on the same platform. LAB ONLY: offered
+      # under ?lab=1, never on the public page or attached to a release. Its
+      # radio is an ESP32-C6 that needs our own firmware written to it first
+      # (docs/TAB5.md); a stock Tab5 runs this build with WiFi and Bluetooth
+      # off. Its own step, so a failure here never costs the C5 boards.
+      - name: Build M5Stack Tab5 (ESP32-P4)
+        continue-on-error: true
+        run: pio run -e tab5
       - name: Collect
         run: |
           mkdir -p c5
@@ -122,6 +130,13 @@ jobs:
           # boot_app0 lives in the framework the C5 was built with, not the
           # Xtensa boards' one.
           cp "$(find ~/.platformio/packages -path '*framework-arduinoespressif32*/tools/partitions/boot_app0.bin' | head -1)" c5/boot_app0.bin
+          # The Tab5: bootloader at 0x2000 like the C5, the 16 MB table, and
+          # the same framework's boot_app0 under its own name, so its lab
+          # manifest never depends on a C5 build having come through.
+          if [ -f .pio/build/tab5/firmware.bin ]; then
+            for f in bootloader partitions firmware; do cp ".pio/build/tab5/$f.bin" "c5/tab5-$f.bin"; done
+            cp c5/boot_app0.bin c5/tab5-boot_app0.bin
+          fi
           ls -l c5
       - uses: actions/upload-artifact@v4
         with:
@@ -286,6 +301,12 @@ jobs:
             cp c5/boot_app0.bin esp32c5-boot_app0.bin
           else
             echo "::warning::No Marauder V8 build this run; the release goes out without it."
+          fi
+          # The Tab5, lab only: its four files, for the lab list below.
+          if [ -f c5/tab5-firmware.bin ]; then
+            cp c5/tab5-firmware.bin c5/tab5-bootloader.bin c5/tab5-partitions.bin c5/tab5-boot_app0.bin .
+          else
+            echo "::warning::No Tab5 build this run; it is not in the lab list."
           fi
           python -m esptool --chip esp32 merge_bin \
             -o firmware-cyd-merged.bin \
@@ -746,8 +767,8 @@ jobs:
           import json, shutil, os
           label = "${{ steps.ver.outputs.label }}"
           ver   = "${{ steps.ver.outputs.version }}"
-          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "freenove-s3-35", "crowpanel7", "nm-cyd-c5", "marauder-v8", "tdeck-plus", "sticks3", "cardputer-adv"):
-              # The C5 comes from its own runner and may not have come at all.
+          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "freenove-s3-35", "crowpanel7", "nm-cyd-c5", "marauder-v8", "tdeck-plus", "sticks3", "cardputer-adv", "tab5"):
+              # The C5s and the Tab5 come from their own runner and may not have come at all.
               if not os.path.exists(board + "-firmware.bin"):
                   print("::warning::no %s build this run; not in the lab list" % board)
                   continue

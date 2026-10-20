@@ -21,6 +21,7 @@ const BOARDS = new Set([
   "nm-cyd-c5", "marauder-v8",
   "sticks3", "cardputer-adv",
   "twatch-s3",
+  "tab5",
 ]);
 const ORIGINS = new Set(["https://squachwatch.com", "https://www.squachwatch.com"]);
 
