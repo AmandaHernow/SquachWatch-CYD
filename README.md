@@ -84,6 +84,7 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | Board | Flasher | Worth knowing |
 |---|---|---|
 | 2.8" CYD — ESP32-2432S028R | Yes | Ships with an ST7789 or an ILI9341 screen depending on the batch, and the flasher has both. A solid white screen means try the other one |
+| DIYmalls 2.8" — JC2432W328C (capacitive) | Yes | Uses the shared ST7789 `cyd` / `cyd-fast` firmware with runtime touchscreen detection. [Hardware guide](docs/DIYMALLS-28.md) |
 | 3.2" capacitive — ESP32-2432S032C | Yes | IPS screen, capacitive touch |
 | 3.2" resistive — Freenove FNK0103 | Yes | IPS screen |
 | RL Phantom 2.4" — ESP32-2432S024R | Yes | Status light on the front |
@@ -101,8 +102,10 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | M5Stack Cardputer ADV | BETA | Driven from its keyboard. Not the original Cardputer |
 | LilyGo T-Watch S3 / S3 Plus | BETA | On your wrist, with a battery and a buzz. Listens to **LoRa**; the S3 Plus adds **GPS**. See [On the watch](#on-the-watch) |
 
-Each board has its own build in `platformio.ini`, one `[env:...]` each, with
-what is and is not confirmed on it.
+Board builds and their confirmed hardware support are listed in
+`platformio.ini`. Compatible variants can share an environment when runtime
+detection handles their hardware differences, as with the original CYD and
+the DIYmalls JC2432W328C.
 
 ## Web Flash
 
