@@ -5,7 +5,7 @@
 set -e
 . ~/esp-idf/export.sh >/dev/null 2>&1
 SRC=/mnt/i/GitHub/SquachWatch-CYD/SquachWatch-CYD/tools/tab5-c6/probe
-OUT="/mnt/x/Claude Stuff/temp/claude/I--GitHub-SquachWatch-CYD/41ad31a9-5d3e-467f-a53b-3652ce00dd48/scratchpad/tab5ota"
+OUT=/mnt/i/GitHub/SquachWatch-CYD/SquachWatch-CYD/sim/out/tab5/probe   # ignored bench output
 cd ~/tab5-c6
 rm -rf probe-base && cp -r ota54 probe-base && cd probe-base
 cp "$SRC/main_probe.c" main/main.c
