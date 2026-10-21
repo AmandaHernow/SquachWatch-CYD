@@ -19,8 +19,24 @@
 #include "crowpanel7_buzzer.h"
 // The [frame] line's "rows" is whoever actually wrote them.
 #define SQW_PUSH_ROWS() CrowBlit::lastRows()
+#elif defined(TAB5)
+#include "tab5_board.h"
+#include "tab5_display.h"
+#include "tab5_panel.h"
+#include "tab5_blit.h"
+#define SQW_PUSH_ROWS() Tab5Blit::lastRows()
 #else
 #define SQW_PUSH_ROWS() FramePush::lastRows()
+#endif
+// The frame buffer forced into INTERNAL RAM on the boards whose blit reads it
+// scattered (the CrowPanel's twitch, the Tab5's column-wise walk): plain
+// calloc() of anything over CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL is served
+// from PSRAM on a PSRAM core, so the threshold is raised around the one
+// allocation. See the createSprite() calls below.
+#if (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL) || (defined(TAB5) && TAB5_FRAME_INTERNAL)
+#define SQW_FRAME_FORCE_INTERNAL 1
+#else
+#define SQW_FRAME_FORCE_INTERNAL 0
 #endif
 #if defined(FREENOVE_S3_35)
 #include "st77922_display.h"
@@ -40,7 +56,7 @@
 #include <XPT2046_Touchscreen.h>
 #include <Preferences.h>  // AWOK's own per-rotation touch-cal storage; see the AWOK block below pollTouch()'s globals
 #include <esp_heap_caps.h>   // heap_caps_get_largest_free_block() -- diagnostics screen
-#if defined(NM_CYD_C5)
+#if defined(NM_CYD_C5) || defined(TAB5)
 #include <esp_memory_utils.h> // esp_ptr_external_ram(): is the frame in PSRAM? (IDF 5 only)
 #endif
 #include <esp_system.h>      // esp_reset_reason() -- diagnostics screen
@@ -542,6 +558,10 @@ constexpr bool PANEL_NEEDS_INVERSION = false;
 // is a no-op and CrowPanelTFT hides it. False keeps the XOR in the Settings
 // handler meaningful rather than pretending a control exists.
 constexpr bool PANEL_NEEDS_INVERSION = false;
+#elif defined(TAB5)
+// A DSI video panel behind M5GFX; the app's INVERT setting has nothing to
+// send, so false keeps the Settings handler's XOR honest.
+constexpr bool PANEL_NEEDS_INVERSION = false;
 #else
 constexpr bool PANEL_NEEDS_INVERSION = false;
 #endif
@@ -585,6 +605,10 @@ public:
 // device type and only this hierarchy gives the two a common base. Nothing
 // is ever sent to an SPI display bus on this board -- see the header.
 CrowPanelTFT        tft;
+#elif defined(TAB5)
+// Likewise not a TFT_eSPI: a MIPI-DSI panel driven by M5GFX, wearing the
+// library's interface for the same reason -- see tab5_display.h.
+Tab5TFT             tft;
 #elif defined(FREENOVE_S3_35)
 // Likewise not a TFT_eSPI: an ST77922 on a four-lane QSPI bus, wearing the
 // library's interface for the same reason -- see st77922_display.h.
@@ -771,6 +795,10 @@ static bool rawReadResistive(int16_t& a, int16_t& b);
 // calibration is needed or wanted.
 static uint16_t CAP_NX_MIN = CROW_CAP_NX_MIN, CAP_NX_MAX = CROW_CAP_NX_MAX;
 static uint16_t CAP_NY_MIN = CROW_CAP_NY_MIN, CAP_NY_MAX = CROW_CAP_NY_MAX;
+#elif defined(TAB5)
+// M5GFX reports panel pixels of the rotated panel; a divide by TAB5_SCALE.
+static uint16_t CAP_NX_MIN = TAB5_CAP_NX_MIN, CAP_NX_MAX = TAB5_CAP_NX_MAX;
+static uint16_t CAP_NY_MIN = TAB5_CAP_NY_MIN, CAP_NY_MAX = TAB5_CAP_NY_MAX;
 #elif defined(FREENOVE_S3_35)
 // The ST77922's own touch reports panel pixels too: a pass-through.
 static uint16_t CAP_NX_MIN = St77922Touch::NX_MIN, CAP_NX_MAX = St77922Touch::NX_MAX;
@@ -1521,6 +1549,11 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
     if (!St77922Touch::read(x, y)) return false;
     a = (int16_t)x; b = (int16_t)y;
     return true;
+#elif defined(TAB5)
+    uint16_t x, y;
+    if (!Tab5Touch::read(x, y)) return false;
+    a = (int16_t)x; b = (int16_t)y;
+    return true;
 #else
     if (usingCapTouch) return rawReadCap(a, b);
 #if defined(TOUCH_ON_DISPLAY_BUS) || defined(CYD35R)
@@ -1627,7 +1660,7 @@ static bool s_screenDimmed = false;
 // screen off or on, a long one starts CHARGE MODE. The S3 boards and the
 // CrowPanel are left out until somebody has pressed theirs -- except the
 // Freenove 3.5", whose one button is GPIO0 like a CYD's.
-#if defined(ESP32) && (!defined(SQW_S3) || defined(FREENOVE_S3_35)) && !defined(CROWPANEL7)
+#if defined(ESP32) && (!defined(SQW_S3) || defined(FREENOVE_S3_35)) && !defined(CROWPANEL7) && !defined(TAB5)
 #define SQW_BOOT_BTN 1
 #else
 #define SQW_BOOT_BTN 0
@@ -1717,6 +1750,9 @@ static void applyBrightness() {
     // takes a bare I2C command byte on an inverted scale. CrowBL::set()
     // keeps the firmware's own 0..255-with-255-brightest convention.
     CrowBL::set(duty);
+#elif defined(TAB5)
+    // M5GFX's brightness: the backlight is a PWM pin it owns.
+    Tab5Panel::backlight(duty);
 #elif defined(NM_CYD_C5)
     // One backlight, and a pin-based call. Arduino core 3 dropped the LEDC
     // channel API entirely: ledcWrite takes the PIN now, and the channel is
@@ -2524,11 +2560,11 @@ static void restoreFrameBuffer() {
 #if !defined(CYD35)
     if (frameBufferOk) return;
     frame.setColorDepth(8);
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(1u << 20);   // back into internal RAM, see setup()
 #endif
     const bool back = frame.createSprite(tft.width(), tft.height());
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
 #endif
     if (back) {
@@ -4009,7 +4045,7 @@ static void panelShow()   {}
 #endif
 
 void setup() {
-#if defined(ARDUINO_ARCH_ESP32) && !defined(CROWPANEL7)
+#if defined(ARDUINO_ARCH_ESP32) && !defined(CROWPANEL7) && !defined(TAB5)
     g_frameSprite = &frame;
 #endif
 #if SQW_SPEAKER
@@ -4036,11 +4072,12 @@ void setup() {
 #if SQW_SPEAKER
     powerDiaryBoot();
 #endif
-#if defined(SQW_S3)
+#if defined(SQW_S3) || defined(TAB5)
     // Native USB: with nothing reading the port, every print would otherwise
     // wait its full timeout for a host, and after the chatty first-boot
     // calibration the loop crawled so slowly the screen looked frozen black.
-    // Drop the bytes instead when nobody is listening.
+    // Drop the bytes instead when nobody is listening. (The Tab5 showed the
+    // same thing on 2026-10-19: laggy and freezing only while on the cable.)
     Serial.setTxTimeoutMs(0);
 #endif
     delay(200);
@@ -4093,7 +4130,7 @@ void setup() {
 // ... and not on the CrowPanel 7, where GPIO21 is the panel's BLUE-0 data
 // line. Driving it high before the panel driver claims it is a stripe down the
 // picture at best.
-#if !defined(AWOK) && !defined(RLPHANTOM) && !defined(RLPHANTOM_R) && !defined(SQW_S3) && !defined(CROWPANEL7) && !defined(CYD32C) && !defined(CYD35C)
+#if !defined(AWOK) && !defined(RLPHANTOM) && !defined(RLPHANTOM_R) && !defined(SQW_S3) && !defined(CROWPANEL7) && !defined(CYD32C) && !defined(CYD35C) && !defined(TAB5)
     pinMode(21, OUTPUT); digitalWrite(21, HIGH);
 #endif
 #if defined(SQW_S3)
@@ -4105,6 +4142,9 @@ void setup() {
     // command to the helper MCU, sent once Wire is up. GPIO27/32 are the same
     // OPI PSRAM lines the watch avoids, and every other candidate here is an
     // RGB data line.
+#elif defined(TAB5)
+    // Nothing: M5GFX owns the backlight pin, and 21/27/32 are somebody else's
+    // on a P4.
 #elif defined(NM_CYD_C5)
     // One backlight, TFT_BL (GPIO25), and ONLY that pin. Confirmed on the
     // board: the branch below drives 27 and 32, and on a C5 that is
@@ -4217,6 +4257,8 @@ void setup() {
 #if defined(CROWPANEL7)
     // No LEDC at all: the backlight is an I2C command byte. Claiming channels
     // here would only take them away from something that has a pin.
+#elif defined(TAB5)
+    // No LEDC here either: M5GFX set the backlight's PWM up with the panel.
 #elif defined(TDECK_PLUS)
     // No LEDC: GPIO42 is a pulse-counting 16-step driver, and a PWM on it
     // would walk the brightness round and round. tdeckBacklight() steps it.
@@ -4282,6 +4324,8 @@ void setup() {
         // browned the Phantom out into a second boot.
 #if defined(CROWPANEL7)
         CrowBL::set(24);
+#elif defined(TAB5)
+        Tab5Panel::backlight(24);
 #elif defined(TDECK_PLUS)
         tdeckBacklight(24);
 #else
@@ -4332,7 +4376,7 @@ void setup() {
     // 16-bit — the full 16-bit buffer didn't fit in the available
     // contiguous heap on this board.
     frame.setColorDepth(8);
-#if (defined(SQW_S3) && !defined(FREENOVE_S3_35) && !defined(FREENOVE_S3_40)) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
+#if (defined(SQW_S3) && !defined(FREENOVE_S3_35) && !defined(FREENOVE_S3_40)) || SQW_FRAME_FORCE_INTERNAL
     // 57.6 KB fits in internal RAM with room to spare (75 KB at 320x240), and a sprite in
     // PSRAM pushes slower and cannot go by DMA. Keep it inside. (Not the
     // Freenove 3.5": its 154 KB frame goes to PSRAM on purpose, and the QSPI
@@ -4343,7 +4387,7 @@ void setup() {
     // writes into a PSRAM sprite starve it (see crowpanel7_board.h).
     frame.setAttribute(PSRAM_ENABLE, false);
 #endif
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     // PSRAM_ENABLE=false only makes TFT_eSPI call plain calloc() -- and on a
     // PSRAM-enabled Arduino core plain calloc() of anything over
     // CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL (4 KB here) is served from PSRAM
@@ -4358,15 +4402,15 @@ void setup() {
     heap_caps_malloc_extmem_enable(1u << 20);
 #endif
     const bool frameOk = frame.createSprite(tft.width(), tft.height());
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
 #endif
-#if (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL) || SQW_PUSH_ASYNC
+#if SQW_FRAME_FORCE_INTERNAL || SQW_PUSH_ASYNC
     // Say where it landed: a frame in the wrong memory is the CrowPanel's
     // twitch and the C5's eight frames a second.
     if (frameOk) {
         const void* a = frame.buf();
-#if defined(NM_CYD_C5)
+#if defined(NM_CYD_C5) || defined(TAB5)
         const bool ext = esp_ptr_external_ram(a);
 #else
         // The S3's PSRAM window; internal SRAM sits at 0x3FC8xxxx.
@@ -4442,6 +4486,15 @@ void setup() {
     // buzzer a crash may have left sounding -- the helper keeps its state
     // across our reset. Not a boot beep.
     CrowBuzzer::begin();
+#elif defined(TAB5)
+    // The ST7123's own touch, through M5GFX, which brought it up with the
+    // panel in tft.init().
+    usingCapTouch = Tab5Panel::up() && Tab5Panel::hasTouch();
+    Serial.println(usingCapTouch ? "Tab5 -- ST7123 touch through M5GFX."
+                                 : "Tab5 -- no touch controller; no touch.");
+    // Spelled out, because a brownout here looked like a lock-up on the
+    // console until the reset reason was read (2026-10-19).
+    Serial.printf("[power] boot: %s (esp_reset_reason %d)\n", resetReasonName(), (int)esp_reset_reason());
 #elif defined(CYD32C) || defined(CYD35C)
     // The GT911, on the CYD's capacitive I2C pins. Raw panel pixels in the
     // panel's own portrait frame, so the five-target calibration maps them
@@ -4559,7 +4612,7 @@ void setup() {
         uint32_t windowStart = millis();
         while (millis() - windowStart < 1200) {
             int16_t a, b;
-#if defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C) || defined(SQW_SMALL) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS)
+#if defined(CROWPANEL7) || defined(CYD32C) || defined(CYD35C) || defined(SQW_SMALL) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS) || defined(TAB5)
             // The GT911 (and the ST77922's touch) is neither of the two
             // below; the two-way dispatch polled a capacitive controller that
             // is not on this bus, a hundred bus errors a boot.
@@ -4611,13 +4664,13 @@ void setup() {
     // injected against the compiled-in ranges -- a calibration screen would
     // just sit there waiting for a finger.
     initTouchFit();
-#if defined(ESP32) && !defined(CROWPANEL7) && !defined(SQW_SMALL) && !defined(FREENOVE_S3_35)   // nothing to calibrate on a stick with no touch
+#if defined(ESP32) && !defined(CROWPANEL7) && !defined(SQW_SMALL) && !defined(FREENOVE_S3_35) && !defined(TAB5)   // nothing to calibrate on a stick with no touch
     if (s_calSource != CalSource::SAVED) {
         Serial.println("Touch: no five-target calibration yet -- running it now.");
         runTouchCalibration();
     }
 #endif
-#if defined(CROWPANEL7) || defined(FREENOVE_S3_35)
+#if defined(CROWPANEL7) || defined(FREENOVE_S3_35) || defined(TAB5)
     // Never on first boot here. The GT911 (and the ST77922's own touch)
     // reports panel pixels, so the compiled-in fit is already the identity
     // and there is nothing to calibrate -- making someone tap five targets
@@ -4628,7 +4681,7 @@ void setup() {
 
     // Seed the PRNG so the digital rain starts in a fresh-looking state
     // on every boot.
-#if defined(SQW_S3) || defined(CROWPANEL7) || defined(NM_CYD_C5)
+#if defined(SQW_S3) || defined(CROWPANEL7) || defined(NM_CYD_C5) || defined(TAB5)
     // GPIO34 is not an ADC pin on an S3 (it is an octal PSRAM line on these
     // boards, the CrowPanel's N16R8 module included): analogRead() refuses
     // it and the seed was a constant. The hardware RNG instead -- before WiFi
@@ -4659,6 +4712,8 @@ void setup() {
     // is the one large load that nobody misses for a second at boot.
 #if defined(CROWPANEL7)
     CrowBL::set(24);
+#elif defined(TAB5)
+    Tab5Panel::backlight(24);
 #elif defined(TDECK_PLUS)
     tdeckBacklight(24);
 #else
@@ -4879,6 +4934,10 @@ static inline void pushFrame(int x, int y) {
     // the 8->16 bit conversion on the way. It declines only if the panel
     // never came up, in which case there is nowhere to put the frame at all.
     CrowBlit::push(frame.buf(), frame.bufW(), frame.bufH(), x, y);
+#elif defined(TAB5)
+    // Same shape: the framebuffer is memory and Tab5Blit writes the changed
+    // columns into it, turned landscape and doubled on the way.
+    Tab5Blit::push(frame.buf(), frame.bufW(), frame.bufH(), x, y);
 #else
 #if SQW_PUSH_ASYNC
     // The push task takes this frame and the loop draws the next into the
@@ -5527,6 +5586,8 @@ static uint32_t s_chargeAt = 0, s_chargeLitAt = 0, s_chargeLitUntil = 0, s_charg
 static void chargeBacklight(uint8_t duty) {
 #if defined(CROWPANEL7)
     CrowBL::set(duty);
+#elif defined(TAB5)
+    Tab5Panel::backlight(duty);
 #else
     ledcWrite(BL_CH_ORIG, duty);
     ledcWrite(BL_CH_CAP,  duty);
@@ -6108,7 +6169,7 @@ void loop() {
         Serial.printf("[ext] %s\n", s_extOn ? "on" : "off");
     }
 #endif
-#if defined(ESP32) && !defined(SQW_S3) && !defined(CROWPANEL7)   // hardware only: the emulators build this too
+#if defined(ESP32) && !defined(SQW_S3) && !defined(CROWPANEL7) && !defined(TAB5)   // hardware only: the emulators build this too
     // ADC: every input-only analog pin the CYDs leave free, in millivolts,
     // averaged over 16 reads. A battery divider shows up as about half the
     // cell's voltage, and moves when the cell is unplugged.
@@ -9016,6 +9077,8 @@ void loop() {
             info.usingCapTouch = usingCapTouch;
 #if defined(CROWPANEL7)
             info.boardName = "CrowPanel 7";
+#elif defined(TAB5)
+            info.boardName = "Tab5 LAB";
 #elif defined(TOUCH_ON_DISPLAY_BUS)
             info.boardName = "AWOK";
 #elif defined(STICKS3)

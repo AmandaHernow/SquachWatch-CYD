@@ -34,7 +34,9 @@ static bool        s_pocketNoteShown = false;
 // MADCTL, so rotating it would be a per-pixel software transform of an
 // 800x480 buffer every frame -- and the panel is natively landscape anyway.
 // And on the T-Deck: a keyboard under the screen has exactly one way up.
-#if defined(TWATCH_S3) || defined(CROWPANEL7) || defined(TDECK_PLUS)
+// And on the Tab5 for now: the blit turns the frame landscape and has no
+// portrait mapping yet (tab5_board.h).
+#if defined(TWATCH_S3) || defined(CROWPANEL7) || defined(TDECK_PLUS) || defined(TAB5)
 static const bool DEFAULT_ROTATION_LOCK = true;
 #else
 static const bool DEFAULT_ROTATION_LOCK = false;
@@ -55,8 +57,8 @@ static bool        s_deskFullVisit = false;   // one visitor: the whole visit, n
 // one step round from that with its crown on the right (LilyGo's default).
 #if defined(TWATCH_S3)
 static const uint8_t DEFAULT_ROTATION = 2;
-#elif defined(CROWPANEL7)
-static const uint8_t DEFAULT_ROTATION = 0;   // the panel is landscape as wired
+#elif defined(CROWPANEL7) || defined(TAB5)
+static const uint8_t DEFAULT_ROTATION = 0;   // the panel is landscape as wired (the Tab5: as blitted)
 #else
 static const uint8_t DEFAULT_ROTATION = 1;
 #endif
@@ -74,7 +76,15 @@ static bool        s_clock24Hour   = false;
 // FONTS: per kind of text, 0..4 for -2..+2 around the built size (2 is as
 // built). Keys fntMenu, fntText, fntBtn, fntBub, fntXp, fntPet. And a face
 // per kind, 0 as built, 1 PIXEL, 2 SMOOTH: keys fcMenu .. fcPet.
-static uint8_t     s_fontStep[(int)FontKind::COUNT] = { 2, 2, 2, 2, 2, 2 };
+// What a board starts on before anyone touches FONTS. The Tab5's picks from
+// its size lab (2026-10-20): button labels a step bigger and the counter
+// tiles a step smaller on its 5" glass, everything else as built.
+#if defined(TAB5)
+static const uint8_t FONT_DEFAULT[(int)FontKind::COUNT] = { 2, 2, 3, 2, 1, 2 };
+#else
+static const uint8_t FONT_DEFAULT[(int)FontKind::COUNT] = { 2, 2, 2, 2, 2, 2 };
+#endif
+static uint8_t     s_fontStep[(int)FontKind::COUNT] = { FONT_DEFAULT[0], FONT_DEFAULT[1], FONT_DEFAULT[2], FONT_DEFAULT[3], FONT_DEFAULT[4], FONT_DEFAULT[5] };
 static uint8_t     s_fontFace[(int)FontKind::COUNT] = { 0, 0, 0, 0, 0, 0 };
 static const char* const FONT_KEYS[(int)FontKind::COUNT] = { "fntMenu", "fntText", "fntBtn", "fntBub", "fntXp", "fntPet" };
 static const char* const FACE_KEYS[(int)FontKind::COUNT] = { "fcMenu", "fcText", "fcBtn", "fcBub", "fcXp", "fcPet" };
@@ -523,8 +533,8 @@ void load() {
     s_clockFont     = s_prefs.getUChar("clkfont", 0);
     s_clockSize     = s_prefs.getUChar("clksize", 1);
     for (int i = 0; i < (int)FontKind::COUNT; i++) {
-        s_fontStep[i] = s_prefs.getUChar(FONT_KEYS[i], 2);
-        if (s_fontStep[i] > 4) s_fontStep[i] = 2;
+        s_fontStep[i] = s_prefs.getUChar(FONT_KEYS[i], FONT_DEFAULT[i]);
+        if (s_fontStep[i] > 4) s_fontStep[i] = FONT_DEFAULT[i];
         s_fontFace[i] = s_prefs.getUChar(FACE_KEYS[i], 0);
         if (s_fontFace[i] > 2) s_fontFace[i] = 0;
     }

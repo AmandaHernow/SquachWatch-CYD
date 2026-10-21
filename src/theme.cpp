@@ -1151,7 +1151,36 @@ void drawPulsingBorder(TFT_eSPI& t, uint32_t now, uint16_t a, uint16_t b,
 // A pointer-to-array rather than a flat block so every charBuf[i][j] below
 // still reads as a grid. The two numbers that give it its shape live out
 // here with it rather than inside the function that draws.
-static const int MAX_COLS = 96;
+// The widest band a background is ever asked to fill on this build, in the
+// app's own (logical) pixels. The fixed-size buffers below are sized from it,
+// so a board with a small screen does not carry a big one's arrays. Every
+// board draws at 320 or less across, except the 3.5" (480) and the Tab5
+// (640x360 doubled up to its 1280x720 panel). The Tab5 is also the one with
+// RAM to spare, so it gets a little more of everything: SQW_BG_DENSITY is
+// how many times the usual number of toasters, stars and so on a background
+// spreads across the extra room. The emulator can be built with either set
+// by hand (EXTRA_CXXFLAGS) to render a Tab5-sized band the way the board does.
+#ifndef SQW_BG_MAX_W
+#if defined(TAB5)
+#define SQW_BG_MAX_W 640
+#elif defined(CYD35)
+#define SQW_BG_MAX_W 480
+#else
+#define SQW_BG_MAX_W 320
+#endif
+#endif
+#ifndef SQW_BG_DENSITY
+#if defined(TAB5)
+#define SQW_BG_DENSITY 2
+#else
+#define SQW_BG_DENSITY 1
+#endif
+#endif
+
+// One column every 5 px (drawDigitalRain's SPACING). 96 was set for the
+// 3.5"'s 480 and stays the floor so no board's rain changes; the Tab5's 640
+// needs 128, or the right half of its screen has no rain at all.
+static const int MAX_COLS = (SQW_BG_MAX_W / 5 > 96) ? SQW_BG_MAX_W / 5 : 96;
 static const int MAXTRAIL = 24;
 static uint8_t (*s_rainBuf)[MAXTRAIL] = nullptr;
 static bool      s_rainInited = false;
@@ -2637,10 +2666,10 @@ static void publishFlockToaster(uint8_t i, int cx, int cy, int hw, int hh, uint3
 static int8_t s_flockTaken = -1;     // a toaster tapped three times, to be dropped from the flock
 
 void drawFlyingToasters(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
-    static const uint8_t N = 5;
+    static const uint8_t N = 5 * SQW_BG_DENSITY;     // more of everything where the band is bigger
     static float    tx[N], ty[N], tscale[N];
     static uint16_t tcol[N];
-    static const uint8_t NT = 6;
+    static const uint8_t NT = 6 * SQW_BG_DENSITY;
     static float    ox[NT], oy[NT], oscale[NT];
     static bool      oface[NT], oburnt[NT];
     static bool      inited = false;
@@ -2649,7 +2678,7 @@ void drawFlyingToasters(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // black; this is a deliberate addition, so it stays quiet -- the
     // toasters are the subject and none of this is allowed to compete
     // with them for attention.
-    static const uint8_t NSTAR = 44;
+    static const uint8_t NSTAR = 44 * SQW_BG_DENSITY;
     static float   starX[NSTAR], starY[NSTAR];
     static uint8_t starMag[NSTAR], starPh[NSTAR];
 
@@ -4139,7 +4168,12 @@ static void drawXyzzy(TFT_eSPI& t, uint32_t now, int yStart, int bandH) {
 // Two independently-scrolling columns (different add intervals so they
 // never sync up) side by side, so the log fills the full screen width
 // instead of a narrow strip down the left.
-struct TermCol { char lines[20][40]; bool special[20]; uint8_t count; uint32_t lastAdd; };
+// Lines kept per column, and columns across. Two columns of twenty lines fill
+// a 320 or 480 band; the Tab5's 640x360 had a third of its width and half its
+// height empty, so a band 600 or wider gets three columns of up to forty.
+static const uint8_t TERM_LINES = (SQW_BG_MAX_W >= 600) ? 40 : 20;
+static const uint8_t TERM_COLS  = (SQW_BG_MAX_W >= 600) ? 3 : 2;
+struct TermCol { char lines[TERM_LINES][40]; bool special[TERM_LINES]; uint8_t count; uint32_t lastAdd; };
 
 static void termGenLine(char* out, size_t outSize) {
     static const char* VERBS[] = { "INIT", "PROBE", "SCAN", "MOUNT", "AUTH", "PARSE", "TRACE", "PING", "SYNC", "LOAD" };
@@ -4172,8 +4206,8 @@ static const uint8_t TERM_EGG_COUNT = sizeof(TERM_EGG_LINES) / sizeof(TERM_EGG_L
 static void termAdvance(TermCol& c, uint32_t now, uint32_t interval) {
     if (now - c.lastAdd <= interval) return;
     c.lastAdd = now;
-    if (c.count < 20) c.count++;
-    for (uint8_t i = 19; i > 0; i--) {
+    if (c.count < TERM_LINES) c.count++;
+    for (uint8_t i = TERM_LINES - 1; i > 0; i--) {
         memcpy(c.lines[i], c.lines[i - 1], sizeof(c.lines[i]));
         c.special[i] = c.special[i - 1];
     }
@@ -4211,7 +4245,7 @@ void drawTerminalLog(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     if (!s_termCols) {
         // calloc, not malloc: a TermCol is only correct starting empty, and
         // a static one used to get that for free.
-        s_termCols = (TermCol*)calloc(2, sizeof(TermCol));
+        s_termCols = (TermCol*)calloc(TERM_COLS, sizeof(TermCol));
         if (!s_termCols) { t.fillRect(0, yStart, t.width(), yEnd - yStart, BG); return; }
     }
     TermCol* const cols = s_termCols;
@@ -4219,17 +4253,21 @@ void drawTerminalLog(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     int bandH = yEnd - yStart;
     if (bandH < 20) return;
     int visLines = bandH / 9;
-    if (visLines > 20) visLines = 20;
+    if (visLines > TERM_LINES) visLines = TERM_LINES;
+    // Three only where they fit: a line is about 130 px, so 600 across.
+    const uint8_t nCols = (TERM_COLS > 2 && w >= 600) ? 3 : 2;
 
     termAdvance(cols[0], now, 180);
     termAdvance(cols[1], now, 230);   // offset cadence so the two columns don't lock-step
+    if (nCols > 2) termAdvance(cols[2], now, 205);
 
     t.fillRect(0, yStart, w, bandH, BG);
     t.setTextSize(1);
     t.setTextWrap(false);
-    termRender(t, cols[0], 4, yStart, visLines);
-    termRender(t, cols[1], w / 2 + 4, yStart, visLines);
-    t.drawFastVLine(w / 2, yStart, bandH, blend(BG, GREEN, 60));
+    for (uint8_t k = 0; k < nCols; k++) {
+        termRender(t, cols[k], k * w / nCols + 4, yStart, visLines);
+        if (k) t.drawFastVLine(k * w / nCols, yStart, bandH, blend(BG, GREEN, 60));
+    }
 
     // Rare dramatic beat: a full-width banner line flashes across both
     // columns for under a second, breaking the indifferent scroll with
@@ -5329,11 +5367,12 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // bytes) allocated and never once written or read, since fw simply
     // never reaches them there. MAXFH stays 80 for both: the tallest
     // band any board renders is 320px, which is the same 80 cells.
-#if defined(CYD35)
-    static const int MAXFW = 120, MAXFH = 80;
-#else
-    static const int MAXFW = 80, MAXFH = 80;
-#endif
+    // SQW_BG_MAX_W gives 80 cells on those boards and 120 on cyd35, as
+    // before, and 160 on the Tab5, whose 640px band was half empty at 80.
+    // Its height is the same 160 so the grid also covers the band when the
+    // Tab5 turns portrait (640 tall).
+    static const int MAXFW = SQW_BG_MAX_W / CW;
+    static const int MAXFH = (SQW_BG_MAX_W > 480) ? SQW_BG_MAX_W / CW : 80;
     if (!s_fireHeat) {
         s_fireHeat = (uint8_t*)malloc(MAXFW * MAXFH);
         if (!s_fireHeat) { t.fillRect(0, yStart, t.width(), yEnd - yStart, BG); return; }
@@ -5347,7 +5386,7 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // the old version look like one repeating pattern sliding sideways
     // instead of separate flames. Each source also jitters its own
     // base position a little so the flames don't sit glued in place.
-    static const uint8_t NSRC = 7;
+    static const uint8_t NSRC = 7 * SQW_BG_DENSITY;   // the same flame width on a wider band
     static float srcX[NSRC], srcPhase[NSRC], srcFreq[NSRC], srcJitterPh[NSRC];
     static bool  srcInited = false;
 
@@ -6112,7 +6151,13 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
                 ? SCARED[((now - s_wolfAt) / 1400) % (sizeof(SCARED) / sizeof(SCARED[0]))]
                 : reek ? "WHAT REEKS?!"
                 : QUIPS[(slot * 5 + 2) % NQUIP];
-            t.setTextSize(1);
+            // The pets' face, so FONTS > PETS sizes him with them and the
+            // large panels get their bigger balloon: the 6x8 font at size 1
+            // on the small boards, exactly as before. A line too wide for
+            // the band steps down, as a pet's does.
+            const uint8_t callerFont = t.textfont;
+            petFontOn(t);
+            while (t.textWidth(q) + 8 > w - 4 && petFontSmaller(t)) {}
             const int bw = t.textWidth(q) + 8;
             // Derived, not the hard-coded 11 this used to be. Squachy's
             // bubbles and the pet's both size themselves off fontHeight();
@@ -6131,11 +6176,12 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             // clears the top of his head, and only then falls back to
             // clamping against the screen edge.
             const int squachyLeft = (int)(w * 0.34f);
+            // Heights from the balloon's own: 14 and 26 at the 6x8 font.
             int bx = owlX + 10;
-            int by = owlY - 14;
+            int by = owlY - 1 - bh;
             if (bx + bw > squachyLeft) {
                 bx = owlX - bw / 2 + 4;      // centred over the owl
-                by = owlY - 26;
+                by = owlY - 2 * bh;
             }
             if (bx + bw > w - 2)    bx = w - 2 - bw;
             if (bx < 1)             bx = 1;
@@ -6158,6 +6204,8 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             t.setTextColor(ink, paper);
             t.setCursor(bx + 4, by + 3);
             t.print(q);
+            t.setTextFont(callerFont);
+            t.setTextSize(1);
             if (reek) {
                 // Where he is and where his bubble is, for the tap.
                 s_owlX = owlX; s_owlY = owlY;
@@ -6197,7 +6245,7 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // at a randomly chosen flame source rather than anywhere across
     // the width, which is what the old version did: an ember could pop
     // out of bare ground where there was no flame at all.
-    static const uint8_t NE = 8;
+    static const uint8_t NE = 8 * SQW_BG_DENSITY;
     static float    ex[NE], ey[NE], evy[NE];
     static bool     emberInited = false;
     if (!emberInited) {
@@ -6380,8 +6428,13 @@ static uint32_t    s_saySkiTil = 0, s_sayYetTil = 0, s_sayNextAt = 0;
 // and ink the werewolf uses on FIRE, at half the size.
 static void snowSay(TFT_eSPI& t, int x, int topY, const char* txt) {
     if (!txt) return;
-    t.setTextSize(1);
-    const int bw = t.textWidth(txt) + 6, bh = 11;
+    // The pets' face, as the fire owl's: unchanged on the small boards
+    // (11 high at the 6x8 font), bigger on the large ones, and FONTS > PETS
+    // moves it.
+    const uint8_t callerFont = t.textfont;
+    petFontOn(t);
+    while (t.textWidth(txt) + 6 > t.width() - 2 && petFontSmaller(t)) {}
+    const int bw = t.textWidth(txt) + 6, bh = t.fontHeight() + 3;
     int bx = x - bw / 2;
     if (bx < 1) bx = 1;
     if (bx + bw > t.width() - 1) bx = t.width() - 1 - bw;
@@ -6397,6 +6450,8 @@ static void snowSay(TFT_eSPI& t, int x, int topY, const char* txt) {
     t.setTextColor(ink, paper);
     t.setCursor(bx + 3, by + 2);
     t.print(txt);
+    t.setTextFont(callerFont);
+    t.setTextSize(1);
 }
 
 // THE EAT. The payoff, and it runs about one chase in six, so it has to
@@ -7240,9 +7295,12 @@ void drawBackgroundOverlay(TFT_eSPI& t, uint32_t now) {
     const int w = s_wolfSayW;
     const int yStart = s_wolfSayTop;
         auto wolfBubble = [&](const char* txt, int by, uint8_t dim, bool big) {
-            t.setTextSize(big ? 2 : 1);
+            // The howl is the 6x8 font doubled everywhere; the lines are the
+            // pets' face, like the owl's (11 high at the 6x8 font, as before).
+            const uint8_t callerFont = t.textfont;
+            if (big) { t.setTextFont(1); t.setTextSize(2); } else petFontOn(t);
             const int bw = t.textWidth(txt) + (big ? 11 : 7);
-            const int bh = big ? 20 : 11;
+            const int bh = big ? 20 : t.fontHeight() + 3;
             int bx = w - 2 - bw;
             if (bx < 1)          bx = 1;
             if (by < yStart + 1) by = yStart + 1;
@@ -7260,6 +7318,7 @@ void drawBackgroundOverlay(TFT_eSPI& t, uint32_t now) {
             t.setTextColor(ink, paper);
             t.setCursor(bx + 4, by + (big ? 4 : 2));
             t.print(txt);
+            t.setTextFont(callerFont);
             t.setTextSize(1);
         };
 

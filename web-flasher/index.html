@@ -1513,7 +1513,7 @@
       'awok': 'AWOK', 'rlphantom-r': 'RL Phantom',
       'freenove-s3': 'Freenove S3 2.8"', 'freenove-s3-35': 'Freenove S3 3.5"', 'crowpanel7': 'CrowPanel 7"',
       'tdeck-plus': 'T-Deck', 'nm-cyd-c5': 'NM-CYD-C5', 'marauder-v8': 'Marauder V8',
-      'sticks3': 'StickS3', 'cardputer-adv': 'Cardputer', 'twatch-s3': 'T-Watch'
+      'sticks3': 'StickS3', 'cardputer-adv': 'Cardputer', 'twatch-s3': 'T-Watch', 'tab5': 'Tab5'
     };
     var box = document.getElementById('wild');
     var countEl = document.getElementById('wildCount');
@@ -1656,7 +1656,8 @@
          './manifest-lab-crowpanel7.json', './manifest-lab-cyd32c.json',
          './manifest-lab-cyd35-fast.json', './manifest-lab-nm-cyd-c5.json', './manifest-lab-marauder-v8.json',
          './manifest-lab-cyd35c-fast.json', './manifest-lab-sticks3.json',
-         './manifest-lab-cardputer-adv.json', './manifest-lab-tdeck-plus.json'].forEach(function (path) {
+         './manifest-lab-cardputer-adv.json', './manifest-lab-tdeck-plus.json',
+         './manifest-lab-tab5.json'].forEach(function (path) {
           fetch(path, { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (m) {
